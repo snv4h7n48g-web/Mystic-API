@@ -4,7 +4,7 @@ Provides deterministic sun/moon/rising calculations.
 """
 
 from datetime import datetime
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 import math
 
 
@@ -19,6 +19,21 @@ class AstrologyEngine:
     
     This MVP version uses simplified zodiac position calculations.
     """
+
+    SIGN_TRAITS = {
+        "Aries": {"keywords": ["direct", "courageous", "self-starting"], "gift": "momentum", "shadow": "impatience", "relationship": "needs honesty and motion", "work": "thrives when leading the first move", "parent_child": "encourages bravery but benefits from gentler pacing"},
+        "Taurus": {"keywords": ["steady", "sensual", "reliable"], "gift": "stability", "shadow": "stubbornness", "relationship": "builds trust slowly and deeply", "work": "creates value through consistency", "parent_child": "offers calm safety and dependable routines"},
+        "Gemini": {"keywords": ["curious", "quick", "adaptable"], "gift": "range", "shadow": "restlessness", "relationship": "needs conversation and mental spark", "work": "excels where ideas move fast", "parent_child": "teaches through play, language, and openness"},
+        "Cancer": {"keywords": ["protective", "intuitive", "tender"], "gift": "care", "shadow": "defensiveness", "relationship": "needs emotional safety and reciprocity", "work": "works best where people and meaning matter", "parent_child": "nurtures strongly and remembers the emotional weather"},
+        "Leo": {"keywords": ["radiant", "creative", "loyal"], "gift": "warmth", "shadow": "pride", "relationship": "needs devotion, play, and appreciation", "work": "leads through visibility and heart", "parent_child": "brings encouragement, theatre, and confidence"},
+        "Virgo": {"keywords": ["precise", "devoted", "observant"], "gift": "discernment", "shadow": "over-analysis", "relationship": "shows love through care and detail", "work": "improves systems and raises standards", "parent_child": "supports through practical help and thoughtful structure"},
+        "Libra": {"keywords": ["harmonising", "gracious", "social"], "gift": "balance", "shadow": "indecision", "relationship": "needs fairness, beauty, and mutuality", "work": "creates connection and good taste", "parent_child": "models diplomacy and emotional mirroring"},
+        "Scorpio": {"keywords": ["intense", "perceptive", "transformative"], "gift": "depth", "shadow": "control", "relationship": "needs loyalty, privacy, and truth", "work": "does best in high-trust, high-stakes spaces", "parent_child": "parents with fierce protection and emotional x-ray vision"},
+        "Sagittarius": {"keywords": ["expansive", "honest", "questing"], "gift": "vision", "shadow": "bluntness", "relationship": "needs freedom and shared growth", "work": "thrives when teaching, exploring, or widening horizons", "parent_child": "brings optimism, candour, and a bigger world"},
+        "Capricorn": {"keywords": ["strategic", "disciplined", "grounded"], "gift": "mastery", "shadow": "rigidity", "relationship": "shows commitment through effort and steadiness", "work": "builds long-term results patiently", "parent_child": "offers structure, ambition, and earned trust"},
+        "Aquarius": {"keywords": ["visionary", "independent", "unconventional"], "gift": "perspective", "shadow": "detachment", "relationship": "needs space and shared ideals", "work": "innovates by seeing beyond the obvious", "parent_child": "encourages individuality and future-thinking"},
+        "Pisces": {"keywords": ["empathetic", "imaginative", "porous"], "gift": "compassion", "shadow": "escapism", "relationship": "needs tenderness and soulful attunement", "work": "brings intuition and imagination", "parent_child": "parents through softness, symbolism, and emotional sensitivity"},
+    }
     
     ZODIAC_SIGNS = [
         "Aries", "Taurus", "Gemini", "Cancer", 
@@ -237,11 +252,19 @@ class AstrologyEngine:
         # Generate basic aspects (simplified)
         aspects = self._generate_basic_aspects(sun_sign, moon_sign, rising_sign)
         
+        modality_counts = {}
+        for sign in signs:
+            modality = self.MODALITIES[sign]
+            modality_counts[modality] = modality_counts.get(modality, 0) + 1
+
+        dominant_modality = max(modality_counts, key=modality_counts.get)
+
         return {
             "sun_sign": sun_sign,
             "moon_sign": moon_sign,
             "rising_sign": rising_sign,
             "dominant_element": dominant_element,
+            "dominant_modality": dominant_modality,
             "dominant_planet": dominant_planet,
             "sun_element": self.ELEMENTS[sun_sign],
             "sun_modality": self.MODALITIES[sun_sign],
@@ -316,6 +339,59 @@ class AstrologyEngine:
             {"Earth", "Water"}
         ]
         return {element1, element2} in harmonious_pairs
+
+    def generate_persistent_profile(
+        self,
+        chart: Dict[str, Any],
+        birth_location: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a premium reusable astrology profile from core chart facts."""
+        sun_sign = chart["sun_sign"]
+        moon_sign = chart.get("moon_sign") or sun_sign
+        rising_sign = chart.get("rising_sign") or sun_sign
+        dominant_element = chart.get("dominant_element") or self.ELEMENTS[sun_sign]
+        dominant_modality = chart.get("dominant_modality") or self.MODALITIES[sun_sign]
+
+        sun_traits = self.SIGN_TRAITS[sun_sign]
+        moon_traits = self.SIGN_TRAITS[moon_sign]
+        rising_traits = self.SIGN_TRAITS[rising_sign]
+
+        signature = [
+            {"label": "Sun", "sign": sun_sign, "role": "core self"},
+            {"label": "Moon", "sign": moon_sign, "role": "inner emotional life"},
+            {"label": "Rising", "sign": rising_sign, "role": "first impression and style"},
+        ]
+
+        themes: List[Dict[str, str]] = [
+            {"id": "identity", "title": "Identity signature", "text": f"Your core tone feels {', '.join(sun_traits['keywords'])}. {sun_sign} gives your profile a natural instinct for {sun_traits['gift']}."},
+            {"id": "emotional-landscape", "title": "Emotional landscape", "text": f"Emotionally, {moon_sign} brings a {moon_traits['keywords'][0]} response style. When life gets loud, you tend to protect what matters through {moon_traits['gift']}."},
+            {"id": "social-style", "title": "How you come across", "text": f"Your rising sign in {rising_sign} means people often meet you through a {rising_traits['keywords'][0]} surface. It colours your pacing, body language, and first instinct in new rooms."},
+            {"id": "relationships", "title": "Relationships", "text": f"In close bonds, your chart blends {sun_sign}'s need for {sun_traits['relationship']} with {moon_sign}'s emotional pattern. Intimacy deepens when you feel both recognised and safe enough to soften."},
+            {"id": "work", "title": "Work and purpose", "text": f"Professionally, {sun_sign} and {rising_sign} suggest someone who {sun_traits['work']}. Your strongest progress comes when the outer role matches the inner rhythm rather than just chasing pressure."},
+            {"id": "parent-child", "title": "Parent-child dynamic", "text": f"In family bonds, this chart often expresses as someone who {sun_traits['parent_child']}. Whether as parent or child, the growth edge is balancing instinctive care with emotional clarity."},
+            {"id": "growth-edge", "title": "Growth edge", "text": f"The premium lesson here is working with your shadow gently: {sun_traits['shadow']} in the self, {moon_traits['shadow']} in the heart, and {rising_traits['shadow']} in presentation. Integration comes through steadier self-awareness, not self-criticism."},
+        ]
+
+        summary = (
+            f"This is a {sun_sign} sun profile"
+            f"{'' if chart.get('moon_sign') else ' with the emotional field inferred through the sun because birth time was not confirmed'}"
+            f", shaped by a dominant {dominant_element.lower()} element and {dominant_modality.lower()} modality. "
+            f"It carries a tone of {sun_traits['keywords'][0]} identity, {moon_traits['keywords'][0]} feeling, and {rising_traits['keywords'][0]} presentation."
+        )
+
+        return {
+            "signature": signature,
+            "summary": summary,
+            "dominant_element": dominant_element,
+            "dominant_modality": dominant_modality,
+            "dominant_planet": chart.get("dominant_planet"),
+            "themes": themes,
+            "notes": {
+                "birth_location": birth_location,
+                "time_sensitive": chart.get("has_time") is True,
+                "source": "derived_from_birth_profile",
+            },
+        }
 
     def calculate_synastry(
         self,

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Body
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 from sqlalchemy import create_engine, text
@@ -20,6 +20,7 @@ from s3_service import get_s3_service
 from pricing import ProductSKU, get_product, has_feature, validate_purchase, calculate_revenue, PRODUCTS
 from auth_service import get_auth_service
 from user_service import get_user_service
+from purchase_verification import get_purchase_verification_service
 from auth_dependencies import get_current_user, get_current_user_optional, require_admin
 from models import (
     UserCreate, UserLogin, AppleSignIn,
@@ -37,9 +38,43 @@ load_dotenv()
 # =====================
 
 app = FastAPI(title="Mystic API", version="0.1")
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower() or "development"
+IS_PRODUCTION = APP_ENV == "production"
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _database_url() -> str:
+    configured = os.getenv("DATABASE_URL", "").strip()
+    if configured:
+        return configured
+    if IS_PRODUCTION:
+        raise RuntimeError("DATABASE_URL must be set when APP_ENV=production")
+    return "postgresql+psycopg2://mystic:mysticpass@localhost:5432/mystic"
+
+
+def _cors_allowed_origins() -> List[str]:
+    raw = os.getenv("CORS_ALLOWED_ORIGINS", "")
+    if raw.strip():
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    if IS_PRODUCTION:
+        return []
+    return [
+        "http://localhost:8080",
+        "http://localhost:3000",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:3000",
+    ]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8080", "http://localhost:3000", "*"],
+    allow_origins=_cors_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -50,7 +85,7 @@ app.add_middleware(
 # DATABASE
 # =====================
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://mystic:mysticpass@localhost:5432/mystic")
+DATABASE_URL = _database_url()
 engine = create_engine(DATABASE_URL, future=True)
 
 
@@ -105,6 +140,32 @@ def init_db():
 
         # Feng Shui analyses table
         conn.execute(text(FENG_SHUI_TABLE_SCHEMA))
+
+        # Verified purchase ledger for account-wide entitlements and restore flows
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS purchase_transactions (
+            id UUID PRIMARY KEY,
+            user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+            product_id TEXT NOT NULL,
+            transaction_id TEXT NOT NULL UNIQUE,
+            original_transaction_id TEXT,
+            platform TEXT,
+            provider TEXT,
+            environment TEXT,
+            resource_type TEXT,
+            resource_id TEXT,
+            status TEXT DEFAULT 'verified',
+            entitlement_active BOOLEAN DEFAULT false,
+            receipt_present BOOLEAN DEFAULT false,
+            verification_detail TEXT,
+            raw JSONB,
+            created_at TIMESTAMPTZ DEFAULT now(),
+            updated_at TIMESTAMPTZ DEFAULT now()
+        );
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_purchase_transactions_user ON purchase_transactions(user_id, created_at DESC)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_purchase_transactions_product ON purchase_transactions(product_id, created_at DESC)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_purchase_transactions_original ON purchase_transactions(original_transaction_id)"))
 
 
 init_db()
@@ -166,6 +227,14 @@ class PurchaseRequest(BaseModel):
     product_id: str
     transaction_id: str
     receipt_data: Optional[str] = None
+    platform: str = "ios"
+
+
+class SubscriptionActivateRequest(BaseModel):
+    product_id: str
+    transaction_id: str
+    receipt_data: Optional[str] = None
+    platform: str = "ios"
 
 
 class FengShuiCreate(BaseModel):
@@ -269,6 +338,45 @@ def db_get_session(session_id: str) -> Optional[Dict[str, Any]]:
         ).mappings().first()
 
     return dict(row) if row else None
+
+
+def db_get_session_owner_id(session_id: str) -> Optional[str]:
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT user_id FROM user_sessions WHERE session_id = :session_id LIMIT 1"),
+            {"session_id": session_id},
+        ).mappings().first()
+    if not row or not row.get("user_id"):
+        return None
+    return str(row["user_id"])
+
+
+def _user_matches_owner(user: Optional[dict], owner_id: Optional[str]) -> bool:
+    if not owner_id:
+        return True
+    if not user:
+        return False
+    if (user.get("role") or "").lower() == "admin":
+        return True
+    return str(user.get("id")) == str(owner_id)
+
+
+def _assert_session_access(session_id: str, user: Optional[dict]) -> Optional[str]:
+    owner_id = db_get_session_owner_id(session_id)
+    if not _user_matches_owner(user, owner_id):
+        raise HTTPException(403, "You do not have access to this session")
+    return owner_id
+
+
+def _assert_record_access(
+    record: Optional[Dict[str, Any]],
+    user: Optional[dict],
+    resource_name: str,
+) -> Optional[str]:
+    owner_id = str(record.get("user_id")) if record and record.get("user_id") else None
+    if not _user_matches_owner(user, owner_id):
+        raise HTTPException(403, f"You do not have access to this {resource_name}")
+    return owner_id
 
 
 def db_create_compatibility(user_id: Optional[str]) -> str:
@@ -383,6 +491,99 @@ def db_update_feng_shui(analysis_id: str, **fields):
     sql = f"UPDATE feng_shui_analyses SET {', '.join(sets)} WHERE id = :id"
     with engine.begin() as conn:
         conn.execute(text(sql), params)
+
+
+def db_record_purchase_transaction(
+    *,
+    user_id: Optional[str],
+    product_id: str,
+    transaction_id: str,
+    original_transaction_id: Optional[str],
+    platform: str,
+    provider: str,
+    environment: str,
+    resource_type: Optional[str] = None,
+    resource_id: Optional[str] = None,
+    entitlement_active: bool = False,
+    verification_detail: Optional[str] = None,
+    receipt_present: bool = False,
+    raw: Optional[Dict[str, Any]] = None,
+) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+            INSERT INTO purchase_transactions (
+                id, user_id, product_id, transaction_id, original_transaction_id,
+                platform, provider, environment, resource_type, resource_id,
+                status, entitlement_active, receipt_present, verification_detail,
+                raw, created_at, updated_at
+            )
+            VALUES (
+                CAST(:id AS uuid),
+                CAST(:user_id AS uuid),
+                :product_id,
+                :transaction_id,
+                :original_transaction_id,
+                :platform,
+                :provider,
+                :environment,
+                :resource_type,
+                :resource_id,
+                'verified',
+                :entitlement_active,
+                :receipt_present,
+                :verification_detail,
+                CAST(:raw AS jsonb),
+                now(),
+                now()
+            )
+            ON CONFLICT (transaction_id) DO UPDATE SET
+                user_id = COALESCE(EXCLUDED.user_id, purchase_transactions.user_id),
+                product_id = EXCLUDED.product_id,
+                original_transaction_id = COALESCE(EXCLUDED.original_transaction_id, purchase_transactions.original_transaction_id),
+                platform = EXCLUDED.platform,
+                provider = EXCLUDED.provider,
+                environment = EXCLUDED.environment,
+                resource_type = COALESCE(EXCLUDED.resource_type, purchase_transactions.resource_type),
+                resource_id = COALESCE(EXCLUDED.resource_id, purchase_transactions.resource_id),
+                status = 'verified',
+                entitlement_active = EXCLUDED.entitlement_active,
+                receipt_present = EXCLUDED.receipt_present,
+                verification_detail = EXCLUDED.verification_detail,
+                raw = EXCLUDED.raw,
+                updated_at = now()
+            """),
+            {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "product_id": product_id,
+                "transaction_id": transaction_id,
+                "original_transaction_id": original_transaction_id,
+                "platform": platform,
+                "provider": provider,
+                "environment": environment,
+                "resource_type": resource_type,
+                "resource_id": resource_id,
+                "entitlement_active": entitlement_active,
+                "receipt_present": receipt_present,
+                "verification_detail": verification_detail,
+                "raw": json.dumps(raw or {}),
+            },
+        )
+
+
+def db_get_user_purchase_transactions(user_id: str) -> List[Dict[str, Any]]:
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("""
+            SELECT *
+            FROM purchase_transactions
+            WHERE user_id = CAST(:user_id AS uuid)
+            ORDER BY created_at DESC, updated_at DESC
+            """),
+            {"user_id": user_id},
+        ).mappings().all()
+    return [dict(row) for row in rows]
 
 
 # =====================
@@ -592,6 +793,56 @@ def _has_active_subscription(user: Optional[dict]) -> bool:
     return _subscription_active(_get_user_subscription(user))
 
 
+def _verified_products_for_user(user: Optional[dict]) -> List[str]:
+    if not user:
+        return []
+    user_id = str(user.get("id") or "").strip()
+    if not user_id:
+        return []
+
+    products: List[str] = []
+    for row in db_get_user_purchase_transactions(user_id):
+        if row.get("status") != "verified":
+            continue
+        product_id = (row.get("product_id") or "").strip()
+        if not product_id:
+            continue
+        if row.get("entitlement_active") is False and PRODUCTS.get(product_id, {}).get("is_subscription"):
+            continue
+        products.append(product_id)
+    return products
+
+
+def _user_has_any_product(user: Optional[dict], product_ids: List[str]) -> bool:
+    if not user:
+        return False
+    owned = set(_verified_products_for_user(user))
+    return any(product_id in owned for product_id in product_ids)
+
+
+def _compatibility_included_for_user(user: Optional[dict]) -> bool:
+    if _has_active_subscription(user):
+        return True
+    return _user_has_any_product(user, [
+        ProductSKU.COMPATIBILITY,
+        ProductSKU.BUNDLE_LIFE_HARMONY,
+    ])
+
+
+def _feng_shui_included_for_user(user: Optional[dict], product_id: Optional[str]) -> bool:
+    if _has_active_subscription(user):
+        return True
+    desired = (product_id or "").strip()
+    if not desired:
+        return False
+    candidates = [desired]
+    if desired == ProductSKU.FENG_SHUI_SINGLE:
+        candidates.append(ProductSKU.BUNDLE_NEW_BEGINNINGS)
+    if desired == ProductSKU.FENG_SHUI_FULL:
+        candidates.append(ProductSKU.BUNDLE_LIFE_HARMONY)
+    return _user_has_any_product(user, candidates)
+
+
 def _user_has_feature_access(
     user: Optional[dict],
     purchased_products: Optional[List[str]],
@@ -683,6 +934,14 @@ def _image_format_from_key(object_key: str) -> str:
     return "jpeg"
 
 
+def _validate_upload_content_type(content_type: str) -> str:
+    normalized = (content_type or "").strip().lower()
+    allowed = {"image/jpeg", "image/png", "image/webp"}
+    if normalized not in allowed:
+        raise HTTPException(400, "Unsupported content_type. Use image/jpeg, image/png, or image/webp")
+    return normalized
+
+
 def _flow_type(inputs: Dict[str, Any]) -> str:
     return (inputs.get("flow_type") or "combined").strip().lower()
 
@@ -698,6 +957,36 @@ def _flow_uses_astrology(flow_type: str) -> bool:
 
 def _flow_uses_tarot(flow_type: str) -> bool:
     return flow_type in {"combined", "tarot_solo"}
+
+
+def _build_astrology_profile_for_user(user: dict) -> Optional[Dict[str, Any]]:
+    birth_date = user.get("birth_date")
+    if not birth_date:
+        return None
+
+    astro_engine = get_astrology_engine()
+    birth_date_value = birth_date.isoformat() if hasattr(birth_date, "isoformat") else str(birth_date)
+    birth_time = user.get("birth_time")
+    birth_time_unknown = user.get("birth_time_unknown") is True
+    birth_location = user.get("birth_location_normalized") or user.get("birth_location_text")
+
+    chart = astro_engine.generate_chart(
+        birth_date=birth_date_value,
+        birth_time=birth_time,
+        birth_time_unknown=birth_time_unknown,
+    )
+    profile = astro_engine.generate_persistent_profile(chart, birth_location=birth_location)
+
+    return {
+        "sun_sign": chart.get("sun_sign"),
+        "moon_sign": chart.get("moon_sign"),
+        "rising_sign": chart.get("rising_sign"),
+        "dominant_element": chart.get("dominant_element"),
+        "dominant_modality": chart.get("dominant_modality"),
+        "chart": chart,
+        "profile": profile,
+        "birth_profile_complete": bool(birth_location and chart.get("sun_sign")),
+    }
 
 
 def _flow_is_free(flow_type: str) -> bool:
@@ -832,6 +1121,38 @@ def _required_session_product_id(session: Optional[Dict[str, Any]]) -> Optional[
     return ProductSKU.READING_BASIC
 
 
+def _bool_env(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _verify_purchase_or_raise(
+    *,
+    product_id: str,
+    transaction_id: str,
+    receipt_data: Optional[str],
+    is_subscription: bool = False,
+    platform: str = "ios",
+):
+    verifier = get_purchase_verification_service()
+    try:
+        return verifier.verify_purchase(
+            product_id=product_id,
+            transaction_id=transaction_id,
+            receipt_data=receipt_data,
+            platform=platform,
+            is_subscription=is_subscription,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(501, str(exc)) from exc
+    except NotImplementedError as exc:
+        raise HTTPException(501, str(exc)) from exc
+
+
 def _session_has_paid_reading_access(
     session: Optional[Dict[str, Any]],
     user: Optional[dict],
@@ -844,7 +1165,30 @@ def _session_has_paid_reading_access(
         return True
 
     purchased = (session or {}).get("purchased_products") or []
-    return required_product_id in purchased
+    if required_product_id in purchased:
+        return True
+
+    owned_products = _verified_products_for_user(user)
+    if required_product_id in owned_products:
+        return True
+
+    required_product = PRODUCTS.get(required_product_id)
+    if not required_product:
+        return False
+
+    required_features = {
+        feature
+        for feature in required_product.get("features", [])
+        if feature not in {"bundle", "subscription", "all_access", "daily"}
+    }
+    if not required_features:
+        return False
+
+    return any(
+        has_feature(candidate_products, feature)
+        for candidate_products in (purchased, owned_products)
+        for feature in required_features
+    )
 
 
 @app.post("/v1/locations/validate")
@@ -936,10 +1280,16 @@ def create_session(payload: SessionCreate):
 
 
 @app.patch("/v1/sessions/{session_id}")
-def update_session(session_id: str, payload: SessionUpdate):
+def update_session(
+    session_id: str,
+    payload: SessionUpdate,
+    user: Optional[dict] = Depends(get_current_user_optional),
+):
     session = db_get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
+
+    _assert_session_access(session_id, user)
 
     inputs = session["inputs"] or {}
     inputs.update(payload.dict(exclude_none=True))
@@ -949,18 +1299,27 @@ def update_session(session_id: str, payload: SessionUpdate):
 
 
 @app.get("/v1/sessions/{session_id}")
-def get_session(session_id: str):
+def get_session(
+    session_id: str,
+    user: Optional[dict] = Depends(get_current_user_optional),
+):
     session = db_get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
+    _assert_session_access(session_id, user)
     return session
 
 
 @app.post("/v1/sessions/{session_id}/tarot")
-def generate_tarot(session_id: str):
+def generate_tarot(
+    session_id: str,
+    user: Optional[dict] = Depends(get_current_user_optional),
+):
     session = db_get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
+
+    _assert_session_access(session_id, user)
 
     now = datetime.now(timezone.utc)
 
@@ -999,6 +1358,8 @@ def generate_preview(
     session = db_get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
+
+    _assert_session_access(session_id, user)
 
     if daily:
         if not user:
@@ -1198,6 +1559,8 @@ def generate_reading(
     if not session:
         raise HTTPException(404, "Session not found")
 
+    _assert_session_access(session_id, user)
+
     if daily:
         if not user:
             raise HTTPException(401, "Authentication required for daily readings")
@@ -1378,11 +1741,16 @@ def generate_reading(
 
 
 @app.get("/v1/sessions/{session_id}/cost")
-def get_session_cost(session_id: str):
+def get_session_cost(
+    session_id: str,
+    user: Optional[dict] = Depends(get_current_user_optional),
+):
     """Get cost breakdown for a session (for analytics)."""
     session = db_get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
+
+    _assert_session_access(session_id, user)
 
     preview_cost = float(session.get("preview_cost_usd") or 0)
     reading_cost = float(session.get("reading_cost_usd") or 0)
@@ -1478,10 +1846,16 @@ def create_compatibility(payload: CompatibilityCreate, user: Optional[dict] = De
 
 
 @app.patch("/v1/compatibility/{compat_id}")
-def update_compatibility(compat_id: str, payload: CompatibilityUpdate):
+def update_compatibility(
+    compat_id: str,
+    payload: CompatibilityUpdate,
+    user: Optional[dict] = Depends(get_current_user_optional),
+):
     compat = db_get_compatibility(compat_id)
     if not compat:
         raise HTTPException(404, "Compatibility session not found")
+
+    _assert_record_access(compat, user, "compatibility reading")
 
     updates = {}
     if payload.person1 is not None:
@@ -1500,6 +1874,8 @@ def generate_compatibility_preview(
     compat = db_get_compatibility(compat_id)
     if not compat:
         raise HTTPException(404, "Compatibility session not found")
+
+    _assert_record_access(compat, user, "compatibility reading")
 
     existing_preview = compat.get("preview")
     if existing_preview:
@@ -1548,15 +1924,19 @@ def generate_compatibility_preview(
         zodiac_compatibility=zodiac_harmony
     )
 
-    subscription_included = _has_active_subscription(user)
+    included = _compatibility_included_for_user(user)
     preview = {
         "teaser_text": llm_result["teaser_text"],
         "person1": {"profile": person1, "chart": chart1, "zodiac": zodiac1},
         "person2": {"profile": person2, "chart": chart2, "zodiac": zodiac2},
         "synastry": synastry,
-        "unlock_price": {"currency": "USD", "amount": 0.0 if subscription_included else 3.99},
+        "unlock_price": {"currency": "USD", "amount": 0.0 if included else 3.99},
         "product_id": ProductSKU.COMPATIBILITY,
-        "entitlements": {"subscription_active": subscription_included},
+        "entitlements": {
+            "subscription_active": _has_active_subscription(user),
+            "bundle_active": _user_has_any_product(user, [ProductSKU.BUNDLE_LIFE_HARMONY]),
+            "included": included,
+        },
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "llm_metadata": {
             "model": llm_result["model"],
@@ -1572,26 +1952,60 @@ def generate_compatibility_preview(
 @app.post("/v1/compatibility/{compat_id}/purchase")
 def record_compatibility_purchase(
     compat_id: str,
-    transaction_id: str,
+    payload: PurchaseRequest,
     user: Optional[dict] = Depends(get_current_user_optional),
 ):
     compat = db_get_compatibility(compat_id)
     if not compat:
         raise HTTPException(404, "Compatibility session not found")
 
-    if _has_active_subscription(user):
+    _assert_record_access(compat, user, "compatibility reading")
+
+    if payload.product_id != ProductSKU.COMPATIBILITY:
+        raise HTTPException(400, "Invalid compatibility product")
+
+    if _compatibility_included_for_user(user):
         return {
-            "status": "included_by_subscription",
+            "status": "included_by_entitlement",
             "product_id": ProductSKU.COMPATIBILITY,
-            "transaction_id": transaction_id,
-            "subscription_active": True,
+            "transaction_id": payload.transaction_id,
+            "subscription_active": _has_active_subscription(user),
+            "bundle_active": _user_has_any_product(user, [ProductSKU.BUNDLE_LIFE_HARMONY]),
         }
 
+    verification = _verify_purchase_or_raise(
+        product_id=payload.product_id,
+        transaction_id=payload.transaction_id,
+        receipt_data=payload.receipt_data,
+        platform=payload.platform,
+    )
+
     db_update_compatibility(compat_id, purchased=True)
+    db_record_purchase_transaction(
+        user_id=str(user["id"]) if user else None,
+        product_id=payload.product_id,
+        transaction_id=verification.transaction_id,
+        original_transaction_id=verification.original_transaction_id,
+        platform=payload.platform,
+        provider=verification.provider,
+        environment=verification.environment,
+        resource_type="compatibility",
+        resource_id=compat_id,
+        entitlement_active=verification.entitlement_active,
+        verification_detail=verification.detail,
+        receipt_present=bool((payload.receipt_data or "").strip()),
+        raw=verification.raw,
+    )
     return {
         "status": "purchased",
         "product_id": ProductSKU.COMPATIBILITY,
-        "transaction_id": transaction_id
+        "transaction_id": payload.transaction_id,
+        "verification": {
+            "provider": verification.provider,
+            "environment": verification.environment,
+            "entitlement_active": verification.entitlement_active,
+            "original_transaction_id": verification.original_transaction_id,
+        },
     }
 
 
@@ -1604,7 +2018,9 @@ def generate_compatibility_reading(
     if not compat:
         raise HTTPException(404, "Compatibility session not found")
 
-    if not compat.get("purchased") and not _has_active_subscription(user):
+    _assert_record_access(compat, user, "compatibility reading")
+
+    if not compat.get("purchased") and not _compatibility_included_for_user(user):
         raise HTTPException(402, "Compatibility purchase required")
 
     if compat.get("reading"):
@@ -1671,10 +2087,16 @@ def create_feng_shui(payload: FengShuiCreate, user: Optional[dict] = Depends(get
 
 
 @app.patch("/v1/feng-shui/{analysis_id}")
-def update_feng_shui(analysis_id: str, payload: FengShuiUpdate):
+def update_feng_shui(
+    analysis_id: str,
+    payload: FengShuiUpdate,
+    user: Optional[dict] = Depends(get_current_user_optional),
+):
     analysis = db_get_feng_shui(analysis_id)
     if not analysis:
         raise HTTPException(404, "Analysis not found")
+
+    _assert_record_access(analysis, user, "feng shui analysis")
 
     updates = {}
     if payload.room_purpose is not None:
@@ -1693,23 +2115,28 @@ def update_feng_shui(analysis_id: str, payload: FengShuiUpdate):
 def get_feng_shui_upload_urls(
     analysis_id: str,
     count: int = 1,
-    content_type: str = "image/jpeg"
+    content_type: str = "image/jpeg",
+    user: Optional[dict] = Depends(get_current_user_optional),
 ):
     analysis = db_get_feng_shui(analysis_id)
     if not analysis:
         raise HTTPException(404, "Analysis not found")
+
+    _assert_record_access(analysis, user, "feng shui analysis")
 
     analysis_type = analysis.get("analysis_type") or "single_room"
     max_images = _max_images_for_type(analysis_type)
     if count < 1 or count > max_images:
         raise HTTPException(400, f"Image count must be between 1 and {max_images}")
 
+    safe_content_type = _validate_upload_content_type(content_type)
+
     s3 = get_s3_service()
     uploads = []
     for _ in range(count):
         presigned = s3.generate_presigned_upload_url(
             session_id=analysis_id,
-            content_type=content_type,
+            content_type=safe_content_type,
             prefix="fengshui"
         )
         uploads.append(presigned)
@@ -1726,15 +2153,23 @@ def generate_feng_shui_preview(
     if not analysis:
         raise HTTPException(404, "Analysis not found")
 
+    _assert_record_access(analysis, user, "feng shui analysis")
+
     preview = analysis.get("preview")
     if preview:
-        if _has_active_subscription(user) and isinstance(preview, dict):
+        included = _feng_shui_included_for_user(user, preview.get("product_id") if isinstance(preview, dict) else None)
+        if included and isinstance(preview, dict):
             preview = dict(preview)
             preview["unlock_price"] = {"currency": "USD", "amount": 0.0}
             entitlements = preview.get("entitlements") or {}
             if not isinstance(entitlements, dict):
                 entitlements = {}
-            entitlements["subscription_active"] = True
+            entitlements["subscription_active"] = _has_active_subscription(user)
+            entitlements["bundle_active"] = _user_has_any_product(user, [
+                ProductSKU.BUNDLE_NEW_BEGINNINGS,
+                ProductSKU.BUNDLE_LIFE_HARMONY,
+            ])
+            entitlements["included"] = True
             preview["entitlements"] = entitlements
         return {"status": "preview_ready", "preview": preview}
 
@@ -1746,16 +2181,23 @@ def generate_feng_shui_preview(
         ProductSKU.FENG_SHUI_FLOOR: 2.99,
     }
 
-    subscription_included = _has_active_subscription(user)
+    included = _feng_shui_included_for_user(user, product_id)
     preview_payload = {
         "teaser_text": "Your space suggests a few high-impact shifts. Unlock the full analysis for detailed recommendations.",
         "analysis_type": analysis_type,
         "unlock_price": {
             "currency": "USD",
-            "amount": 0.0 if subscription_included else price_map[product_id],
+            "amount": 0.0 if included else price_map[product_id],
         },
         "product_id": product_id,
-        "entitlements": {"subscription_active": subscription_included},
+        "entitlements": {
+            "subscription_active": _has_active_subscription(user),
+            "bundle_active": _user_has_any_product(user, [
+                ProductSKU.BUNDLE_NEW_BEGINNINGS,
+                ProductSKU.BUNDLE_LIFE_HARMONY,
+            ]),
+            "included": included,
+        },
         "generated_at": datetime.now(timezone.utc).isoformat()
     }
 
@@ -1773,16 +2215,60 @@ def record_feng_shui_purchase(
     if not analysis:
         raise HTTPException(404, "Analysis not found")
 
-    if _has_active_subscription(user):
+    _assert_record_access(analysis, user, "feng shui analysis")
+
+    expected_product_id = analysis.get("product_id") or _feng_shui_product_for_type(
+        analysis.get("analysis_type") or "single_room"
+    )
+    if payload.product_id != expected_product_id:
+        raise HTTPException(400, "Invalid product for this Feng Shui analysis")
+
+    if _feng_shui_included_for_user(user, payload.product_id):
         return {
-            "status": "included_by_subscription",
+            "status": "included_by_entitlement",
             "product_id": payload.product_id,
             "transaction_id": payload.transaction_id,
-            "subscription_active": True,
+            "subscription_active": _has_active_subscription(user),
+            "bundle_active": _user_has_any_product(user, [
+                ProductSKU.BUNDLE_NEW_BEGINNINGS,
+                ProductSKU.BUNDLE_LIFE_HARMONY,
+            ]),
         }
 
+    verification = _verify_purchase_or_raise(
+        product_id=payload.product_id,
+        transaction_id=payload.transaction_id,
+        receipt_data=payload.receipt_data,
+        platform=payload.platform,
+    )
+
     db_update_feng_shui(analysis_id, purchased=True, product_id=payload.product_id)
-    return {"status": "purchased", "product_id": payload.product_id, "transaction_id": payload.transaction_id}
+    db_record_purchase_transaction(
+        user_id=str(user["id"]) if user else None,
+        product_id=payload.product_id,
+        transaction_id=verification.transaction_id,
+        original_transaction_id=verification.original_transaction_id,
+        platform=payload.platform,
+        provider=verification.provider,
+        environment=verification.environment,
+        resource_type="feng_shui",
+        resource_id=analysis_id,
+        entitlement_active=verification.entitlement_active,
+        verification_detail=verification.detail,
+        receipt_present=bool((payload.receipt_data or "").strip()),
+        raw=verification.raw,
+    )
+    return {
+        "status": "purchased",
+        "product_id": payload.product_id,
+        "transaction_id": payload.transaction_id,
+        "verification": {
+            "provider": verification.provider,
+            "environment": verification.environment,
+            "entitlement_active": verification.entitlement_active,
+            "original_transaction_id": verification.original_transaction_id,
+        },
+    }
 
 
 @app.post("/v1/feng-shui/{analysis_id}/analysis")
@@ -1794,7 +2280,9 @@ def generate_feng_shui_analysis(
     if not analysis:
         raise HTTPException(404, "Analysis not found")
 
-    if not analysis.get("purchased") and not _has_active_subscription(user):
+    _assert_record_access(analysis, user, "feng shui analysis")
+
+    if not analysis.get("purchased") and not _feng_shui_included_for_user(user, analysis.get("product_id")):
         raise HTTPException(402, "Purchase required")
 
     if analysis.get("analysis"):
@@ -1865,7 +2353,11 @@ def generate_feng_shui_analysis(
 # =====================
 
 @app.post("/v1/sessions/{session_id}/palm-upload-url")
-def get_palm_upload_url(session_id: str, content_type: str = "image/jpeg"):
+def get_palm_upload_url(
+    session_id: str,
+    content_type: str = "image/jpeg",
+    user: Optional[dict] = Depends(get_current_user_optional),
+):
     """
     Generate pre-signed URL for palm image upload.
     Client uploads directly to S3 using this URL.
@@ -1873,12 +2365,15 @@ def get_palm_upload_url(session_id: str, content_type: str = "image/jpeg"):
     session = db_get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
+
+    _assert_session_access(session_id, user)
     
     try:
+        safe_content_type = _validate_upload_content_type(content_type)
         s3_service = get_s3_service()
         upload_data = s3_service.generate_presigned_upload_url(
             session_id=session_id,
-            content_type=content_type
+            content_type=safe_content_type
         )
         
         # Store the object key for later retrieval
@@ -1897,8 +2392,8 @@ def get_palm_upload_url(session_id: str, content_type: str = "image/jpeg"):
 @app.post("/v1/sessions/{session_id}/palm-analyze")
 def analyze_palm(
     session_id: str,
-    handedness: str = "right",
-    is_dominant: bool = True,
+    handedness: str = Body("right", embed=True),
+    is_dominant: bool = Body(True, embed=True),
     user: Optional[dict] = Depends(get_current_user_optional),
 ):
     """
@@ -1908,6 +2403,13 @@ def analyze_palm(
     session = db_get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
+
+    _assert_session_access(session_id, user)
+
+    normalized_handedness = handedness.strip().lower()
+    if normalized_handedness not in {"left", "right"}:
+        raise HTTPException(400, "handedness must be 'left' or 'right'")
+    handedness = normalized_handedness
     
     # Check if palm image uploaded
     if not session.get("palm_image_url"):
@@ -1969,7 +2471,13 @@ def analyze_palm(
 @app.get("/v1/products")
 def get_products():
     """Get available products and pricing."""
+    verifier = get_purchase_verification_service()
     return {
+        "purchase_verification": {
+            "ios_ready": verifier.verification_ready("ios"),
+            "android_ready": verifier.verification_ready("android"),
+            "dev_bypass_enabled": verifier.allow_dev_bypass,
+        },
         "products": [
             {
                 "id": p["id"],
@@ -2005,6 +2513,8 @@ def record_purchase(
     session = db_get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
+
+    _assert_session_access(session_id, user)
     
     # Validate product exists
     try:
@@ -2029,29 +2539,60 @@ def record_purchase(
     if not validate_purchase(payload.product_id, purchased):
         raise HTTPException(400, "Purchase not valid (already owned or missing prerequisite)")
     
-    # TODO: Verify Apple IAP receipt here
-    # For now, we just trust the client
-    
+    verification = _verify_purchase_or_raise(
+        product_id=payload.product_id,
+        transaction_id=payload.transaction_id,
+        receipt_data=payload.receipt_data,
+        is_subscription=bool(product.get("is_subscription")),
+        platform=payload.platform,
+    )
+
     # Add to purchased products
     purchased.append(payload.product_id)
-    
+
     # Update session
     db_update_session(session_id, purchased_products=purchased)
-    
+    db_record_purchase_transaction(
+        user_id=str(user["id"]) if user else None,
+        product_id=payload.product_id,
+        transaction_id=verification.transaction_id,
+        original_transaction_id=verification.original_transaction_id,
+        platform=payload.platform,
+        provider=verification.provider,
+        environment=verification.environment,
+        resource_type="session",
+        resource_id=session_id,
+        entitlement_active=verification.entitlement_active,
+        verification_detail=verification.detail,
+        receipt_present=bool((payload.receipt_data or "").strip()),
+        raw=verification.raw,
+    )
+
     return {
         "status": "purchased",
         "product_id": payload.product_id,
         "transaction_id": payload.transaction_id,
-        "purchased_products": purchased
+        "purchased_products": purchased,
+        "verification": {
+            "provider": verification.provider,
+            "environment": verification.environment,
+            "entitlement_active": verification.entitlement_active,
+            "original_transaction_id": verification.original_transaction_id,
+        },
     }
 
 
 @app.get("/v1/sessions/{session_id}/revenue")
-def get_session_revenue(session_id: str):
+def get_session_revenue(
+    session_id: str,
+    user: Optional[dict] = Depends(get_current_user_optional),
+):
     """Get revenue breakdown for this session."""
     session = db_get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
+
+    _assert_session_access(session_id, user)
     
     purchased = session.get("purchased_products") or []
     revenue = calculate_revenue(purchased)
@@ -2265,6 +2806,7 @@ def get_current_user_profile(user: dict = Depends(get_current_user)):
         "birth_location_normalized": user.get("birth_location_normalized"),
         "birth_location_verified": user.get("birth_location_verified"),
     }
+    astrology_profile = _build_astrology_profile_for_user(user)
     return {
         "user_id": str(user["id"]),
         "email": user["email"],
@@ -2277,6 +2819,7 @@ def get_current_user_profile(user: dict = Depends(get_current_user)):
         "total_spent_usd": float(user.get("total_spent_usd", 0)),
         "subscription": subscription_summary,
         "birth_profile": birth_profile,
+        "astrology_profile": astrology_profile,
     }
 
 
@@ -2297,6 +2840,14 @@ def update_current_user_profile(
 
     db_update_user_profile(str(user["id"]), **updates)
     return {"status": "updated"}
+
+
+@app.get("/v1/users/me/astrology-profile")
+def get_my_astrology_profile(user: dict = Depends(get_current_user)):
+    astrology_profile = _build_astrology_profile_for_user(user)
+    if not astrology_profile:
+        raise HTTPException(404, "Birth profile required")
+    return astrology_profile
 
 
 # =====================
@@ -2641,31 +3192,98 @@ def get_subscription_status(user: dict = Depends(get_current_user)):
     }
 
 
+@app.post("/v1/entitlements/refresh")
+def refresh_entitlements(user: dict = Depends(get_current_user)):
+    user_id = str(user["id"])
+    transactions = db_get_user_purchase_transactions(user_id)
+    verified_products = [
+        row.get("product_id")
+        for row in transactions
+        if row.get("status") == "verified"
+        and row.get("entitlement_active")
+        and row.get("product_id")
+    ]
+    unique_products = sorted(set(str(product_id) for product_id in verified_products))
+    subscription = _get_user_subscription(user)
+    active = _subscription_active(subscription)
+
+    return {
+        "status": "refreshed",
+        "subscription_active": active,
+        "verified_products": unique_products,
+        "feature_entitlements": {
+            "compatibility": _compatibility_included_for_user(user),
+            "feng_shui_single": _feng_shui_included_for_user(user, ProductSKU.FENG_SHUI_SINGLE),
+            "feng_shui_full": _feng_shui_included_for_user(user, ProductSKU.FENG_SHUI_FULL),
+            "lunar_forecast": _user_has_any_product(user, [ProductSKU.LUNAR_FORECAST, ProductSKU.BUNDLE_NEW_BEGINNINGS]) or active,
+        },
+        "transactions": [
+            {
+                "product_id": row.get("product_id"),
+                "transaction_id": row.get("transaction_id"),
+                "original_transaction_id": row.get("original_transaction_id"),
+                "resource_type": row.get("resource_type"),
+                "resource_id": row.get("resource_id"),
+                "environment": row.get("environment"),
+                "provider": row.get("provider"),
+                "created_at": row.get("created_at").isoformat() if row.get("created_at") else None,
+                "updated_at": row.get("updated_at").isoformat() if row.get("updated_at") else None,
+            }
+            for row in transactions
+        ],
+    }
+
+
 @app.post("/v1/subscription/activate")
 def activate_subscription(
-    product_id: str,
-    transaction_id: str,
+    payload: SubscriptionActivateRequest,
     user: dict = Depends(get_current_user)
 ):
-    """Activate subscription (dev mode - assumes payment already completed)."""
-    product = PRODUCTS.get(product_id)
+    """Activate subscription after explicit store verification."""
+    product = PRODUCTS.get(payload.product_id)
     if not product or not product.get("is_subscription"):
         raise HTTPException(400, "Invalid subscription product")
+
+    verification = _verify_purchase_or_raise(
+        product_id=payload.product_id,
+        transaction_id=payload.transaction_id,
+        receipt_data=payload.receipt_data,
+        is_subscription=True,
+        platform=payload.platform,
+    )
 
     now = datetime.now(timezone.utc)
     renews_at = now + timedelta(days=30)
     subscription = {
         "status": "active",
-        "product_id": product_id,
-        "transaction_id": transaction_id,
+        "product_id": payload.product_id,
+        "transaction_id": verification.transaction_id,
+        "original_transaction_id": verification.original_transaction_id or verification.transaction_id,
         "started_at": now.isoformat(),
         "renews_at": renews_at.isoformat(),
         "canceled_at": None,
         "auto_renew": True,
         "access_scope": "all_services",
+        "verification_provider": verification.provider,
+        "verification_environment": verification.environment,
     }
     user_service = get_user_service()
     user_service.set_subscription(str(user["id"]), subscription)
+    db_record_purchase_transaction(
+        user_id=str(user["id"]),
+        product_id=payload.product_id,
+        transaction_id=verification.transaction_id,
+        original_transaction_id=verification.original_transaction_id,
+        platform=payload.platform,
+        provider=verification.provider,
+        environment=verification.environment,
+        resource_type="subscription",
+        resource_id=str(user["id"]),
+        entitlement_active=verification.entitlement_active,
+        verification_detail=verification.detail,
+        receipt_present=bool((payload.receipt_data or "").strip()),
+        raw=verification.raw,
+    )
     return {"status": "active", "subscription": subscription}
 
 

@@ -68,7 +68,7 @@ PRODUCTS = {
         "price_usd": 2.99,
         "price_after_apple_cut": 2.09,  # 30% to Apple
         "features": ["astrology", "tarot", "palm"],
-        "description": "Complete reading including AI palm analysis"
+        "description": "Complete reading including automated palm interpretation"
     },
     ProductSKU.PALM_ADDON: {
         "id": ProductSKU.PALM_ADDON,
@@ -200,9 +200,9 @@ PRODUCTS = {
             "lunar_forecast",
             "feng_shui",
         ],
-        "description": "Complete reading, lunar forecast, and single-room Feng Shui path",
+        "description": "Complete reading, Lunar New Year forecast, and single-room Feng Shui path",
         "is_bundle": True,
-        "bundle_steps": ["core_reading", "feng_shui_single"],
+        "bundle_steps": ["core_reading", "lunar_new_year", "feng_shui_single"],
     },
     ProductSKU.BUNDLE_LIFE_HARMONY: {
         "id": ProductSKU.BUNDLE_LIFE_HARMONY,

@@ -476,6 +476,7 @@ OUTPUT STRUCTURE (MUST follow this exact order):
 
 CRITICAL RULES:
 - Reference the user's question directly at least once
+- Prioritize the user's stated intent over broad textbook summary, especially for palm, Sun/Moon, daily, and lunar flows
 - Reference available anchors from the list provided (prioritize primary anchors)
 - Use anchors relevant to this flow type
 - Ground interpretations in the provided reference material

@@ -40,3 +40,22 @@ def test_calculate_synastry_returns_structured_aspects() -> None:
     assert "aspects" in result
     assert isinstance(result["aspects"], list)
     assert all("a" in x and "b" in x and "type" in x for x in result["aspects"])
+
+
+def test_generate_chart_includes_dominant_modality() -> None:
+    engine = AstrologyEngine()
+    chart = engine.generate_chart("1990-12-31", birth_time="08:30", birth_time_unknown=False)
+
+    assert chart["dominant_modality"] in {"Cardinal", "Fixed", "Mutable"}
+
+
+def test_generate_persistent_profile_returns_premium_themes() -> None:
+    engine = AstrologyEngine()
+    chart = engine.generate_chart("1990-12-31", birth_time="08:30", birth_time_unknown=False)
+    profile = engine.generate_persistent_profile(chart, birth_location="Melbourne, Australia")
+
+    assert profile["dominant_element"] == chart["dominant_element"]
+    assert profile["dominant_modality"] == chart["dominant_modality"]
+    assert len(profile["signature"]) == 3
+    theme_ids = {theme["id"] for theme in profile["themes"]}
+    assert {"relationships", "work", "parent-child", "growth-edge"}.issubset(theme_ids)

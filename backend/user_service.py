@@ -13,7 +13,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://mystic:mysticpass@localhost:5432/mystic")
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower() or "development"
+
+
+def _database_url() -> str:
+    configured = os.getenv("DATABASE_URL", "").strip()
+    if configured:
+        return configured
+    if APP_ENV == "production":
+        raise RuntimeError("DATABASE_URL must be set when APP_ENV=production")
+    return "postgresql+psycopg2://mystic:mysticpass@localhost:5432/mystic"
+
+
+DATABASE_URL = _database_url()
 engine = create_engine(DATABASE_URL, future=True)
 
 

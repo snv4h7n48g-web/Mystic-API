@@ -14,14 +14,21 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+APP_ENV = os.getenv('APP_ENV', 'development').strip().lower() or 'development'
+
 
 class AuthService:
     """Service for user authentication and token management."""
     
     def __init__(self):
         """Initialize auth service."""
-        # JWT secret key (should be in environment)
-        self.jwt_secret = os.getenv('JWT_SECRET_KEY', self._generate_secret())
+        # JWT secret key (must be stable and explicit in production)
+        configured_secret = os.getenv('JWT_SECRET_KEY', '').strip()
+        if not configured_secret:
+            if APP_ENV == 'production':
+                raise RuntimeError('JWT_SECRET_KEY must be set when APP_ENV=production')
+            configured_secret = self._generate_secret()
+        self.jwt_secret = configured_secret
         self.jwt_algorithm = 'HS256'
         self.token_expiry_days = 30
     
@@ -142,6 +149,17 @@ class AuthService:
             Decoded token payload or None if invalid
         """
         try:
+            allow_insecure_apple_sign_in = os.getenv(
+                'ALLOW_INSECURE_APPLE_SIGN_IN',
+                'false',
+            ).strip().lower() in {'1', 'true', 'yes', 'on'}
+            if APP_ENV == 'production' and allow_insecure_apple_sign_in:
+                raise RuntimeError(
+                    'ALLOW_INSECURE_APPLE_SIGN_IN cannot be enabled when APP_ENV=production',
+                )
+            if not allow_insecure_apple_sign_in:
+                return None
+
             # Decode without verification (DEV ONLY)
             # In production, verify signature against Apple's public keys
             payload = jwt.decode(

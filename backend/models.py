@@ -1,9 +1,10 @@
+import jwt
 """
 User accounts and authentication system.
 Supports both email/password and Apple Sign In.
 """
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, model_validator
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
@@ -42,9 +43,32 @@ class AppleSignIn(BaseModel):
     """Apple Sign In payload."""
     identity_token: str
     authorization_code: str
-    user_identifier: str
+    user_identifier: Optional[str] = None
     email: Optional[EmailStr] = None
     full_name: Optional[str] = None
+    given_name: Optional[str] = None
+    family_name: Optional[str] = None
+
+    @model_validator(mode="after")
+    def normalize_apple_fields(self):
+        if not self.user_identifier:
+            try:
+                unverified = jwt.decode(self.identity_token, options={"verify_signature": False})
+                sub = unverified.get("sub")
+                if sub:
+                    self.user_identifier = str(sub)
+            except Exception:
+                pass
+
+        if not self.full_name:
+            name = ' '.join(part.strip() for part in [self.given_name or '', self.family_name or ''] if part and part.strip())
+            if name:
+                self.full_name = name
+
+        if not self.user_identifier:
+            raise ValueError('user_identifier is required')
+
+        return self
 
 
 class UserProfile(BaseModel):
