@@ -2524,6 +2524,25 @@ def record_purchase(
     
     # Get existing purchases
     purchased = session.get("purchased_products") or []
+    required_product_id = _required_session_product_id(session)
+    preview = session.get("preview") if isinstance(session.get("preview"), dict) else None
+    preview_unlock_amount = None
+    if preview is not None:
+        unlock_price = preview.get("unlock_price")
+        if isinstance(unlock_price, dict):
+            amount = unlock_price.get("amount")
+            if isinstance(amount, (int, float)):
+                preview_unlock_amount = float(amount)
+
+    preview_product_id = (preview.get("product_id") or "").strip() if preview else ""
+    if preview_unlock_amount is not None and preview_unlock_amount > 0 and not preview_product_id:
+        raise HTTPException(400, "Preview contract is invalid for paid unlock")
+
+    if required_product_id and payload.product_id != required_product_id:
+        raise HTTPException(400, "Purchase product does not match this preview contract")
+
+    if required_product_id is None and preview_unlock_amount is not None and preview_unlock_amount > 0:
+        raise HTTPException(400, "Preview contract is invalid for paid unlock")
 
     # Active subscription includes all non-subscription features.
     if payload.product_id != ProductSKU.DAILY_ASTRO_TAROT and _has_active_subscription(user):
