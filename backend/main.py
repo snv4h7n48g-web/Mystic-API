@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 # Import our services
 from bedrock_service import get_bedrock_service
+from generation import get_generation_orchestrator
 from astrology_engine import get_astrology_engine
 from geocoding_service import get_geocoding_service
 from palm_vision_service import get_palm_vision_service
@@ -47,6 +48,9 @@ def _env_flag(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+USE_PERSONA_ORCHESTRATION = _env_flag("MYSTIC_USE_PERSONA_ORCHESTRATION", False)
 
 
 def _database_url() -> str:
@@ -1509,13 +1513,62 @@ def generate_preview(
             ]
 
         # Generate preview teaser using Bedrock
-        llm_result = bedrock.generate_preview_teaser(
-            question=inputs["question_intention"],
-            astrology_facts=astrology_facts,
-            tarot_cards=tarot_cards,
-            palm_facts=palm_features,
-            flow_type=flow_type,
-        )
+        if USE_PERSONA_ORCHESTRATION:
+            orchestrator = get_generation_orchestrator()
+            subscription_included = _has_active_subscription(user)
+            bundle_product = _bundle_product_for_inputs(inputs)
+            if subscription_included:
+                unlock_amount = 0.0
+                product_id = ProductSKU.DAILY_ASTRO_TAROT
+            elif flow_type == "blessing_solo":
+                unlock_amount = 0.0
+                product_id = ""
+            elif bundle_product and flow_type == "combined":
+                unlock_amount = float(bundle_product.get("price_usd", 0.0))
+                product_id = bundle_product["id"]
+            elif flow_type == "lunar_new_year_solo":
+                unlock_amount = 1.00
+                product_id = ProductSKU.LUNAR_FORECAST
+            else:
+                selected_tier = (inputs.get("selected_tier") or "").lower()
+                if selected_tier == "complete":
+                    unlock_amount = 2.99
+                    product_id = ProductSKU.READING_COMPLETE
+                else:
+                    unlock_amount = 1.99
+                    product_id = ProductSKU.READING_BASIC
+
+            orchestration_result = orchestrator.build_session_preview_result(
+                session=session,
+                user=user,
+                astrology_facts=astrology_facts,
+                tarot_payload=tarot_payload,
+                unlock_price={"currency": "USD", "amount": unlock_amount},
+                product_id=product_id,
+                entitlements={"subscription_active": subscription_included},
+            )
+            llm_result = {
+                "teaser_text": orchestration_result.payload["teaser_text"],
+                "input_tokens": orchestration_result.input_tokens,
+                "output_tokens": orchestration_result.output_tokens,
+                "cost_usd": orchestration_result.cost_usd,
+                "model": orchestration_result.metadata.model_id,
+                "meta": {
+                    "persona_id": orchestration_result.metadata.persona_id,
+                    "llm_profile_id": orchestration_result.metadata.llm_profile_id,
+                    "prompt_version": orchestration_result.metadata.prompt_version,
+                    "theme_tags": orchestration_result.metadata.theme_tags,
+                    "headline": orchestration_result.metadata.headline,
+                },
+            }
+        else:
+            llm_result = bedrock.generate_preview_teaser(
+                question=inputs["question_intention"],
+                astrology_facts=astrology_facts,
+                tarot_cards=tarot_cards,
+                palm_facts=palm_features,
+                flow_type=flow_type,
+            )
 
         # Determine pricing and product based on tier, bundle, or subscription.
         subscription_included = _has_active_subscription(user)
@@ -1564,6 +1617,8 @@ def generate_preview(
                 "output_tokens": llm_result["output_tokens"]
             }
         }
+        if isinstance(llm_result.get("meta"), dict):
+            preview["meta"] = llm_result["meta"]
 
         # Update session
         db_update_session(
