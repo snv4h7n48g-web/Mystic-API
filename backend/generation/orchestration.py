@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from bedrock_service import get_bedrock_service
+
 from .continuity.builder import build_continuity_context
 from .formatting.preview_formatter import build_preview_payload
+from .parser import parse_normalized_output
 from .personas import get_persona
 from .profiles import get_llm_profile
-from .prompts.composer import PROMPT_VERSION, compose_generation_prompt
+from .prompts.composer import compose_generation_prompt
 from .routing.persona_router import choose_persona
-from .types import GenerationContext, GenerationMetadata, NormalizedMysticOutput, OrchestrationResult
+from .types import GenerationContext, GenerationMetadata, OrchestrationResult
 
 
 class MysticGenerationOrchestrator:
@@ -60,21 +63,21 @@ class MysticGenerationOrchestrator:
                 "tarot": tarot_payload,
             },
         )
-        normalized = NormalizedMysticOutput(
-            opening_hook="A pattern is beginning to gather around this question.",
-            current_pattern="The symbols point to a quieter but meaningful shift already underway.",
-            emotional_truth="Part of the tension comes from sensing change before you fully trust it.",
-            practical_guidance="Stay with the clearest signal instead of chasing every possibility.",
-            continuity_callback=None,
-            next_return_invitation="Come back tomorrow and see what sharpens once the pattern settles.",
-            premium_teaser="There is a deeper layer beneath this spread if you want the fuller reading.",
-            theme_tags=["change", "clarity"],
+        bedrock = get_bedrock_service()
+        llm_result = bedrock.invoke_text(
+            model_id=profile.model_id,
+            system_prompt=prompt["system_prompt"],
+            user_messages=prompt["messages"],
+            temperature=profile.temperature,
+            top_p=profile.top_p,
+            max_tokens=profile.max_tokens,
         )
+        normalized = parse_normalized_output(llm_result["text"])
         metadata = GenerationMetadata(
             persona_id=persona.id,
             llm_profile_id=profile.id,
             prompt_version=prompt["prompt_version"],
-            model_id=profile.model_id,
+            model_id=llm_result["model"],
             theme_tags=normalized.theme_tags,
             headline=normalized.opening_hook,
         )
@@ -88,7 +91,13 @@ class MysticGenerationOrchestrator:
             astrology_facts=astrology_facts,
             tarot_payload=tarot_payload,
         )
-        return OrchestrationResult(payload=payload, metadata=metadata, cost_usd=0.0)
+        return OrchestrationResult(
+            payload=payload,
+            metadata=metadata,
+            input_tokens=llm_result["input_tokens"],
+            output_tokens=llm_result["output_tokens"],
+            cost_usd=llm_result["cost_usd"],
+        )
 
 
 _generation_orchestrator: MysticGenerationOrchestrator | None = None

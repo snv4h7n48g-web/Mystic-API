@@ -120,6 +120,18 @@ def init_db():
         );
         """))
         
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS preview_persona_id TEXT"))
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS reading_persona_id TEXT"))
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS preview_llm_profile_id TEXT"))
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS reading_llm_profile_id TEXT"))
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS preview_prompt_version TEXT"))
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS reading_prompt_version TEXT"))
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS preview_theme_tags JSONB"))
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS reading_theme_tags JSONB"))
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS continuity_source_session_id UUID"))
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS preview_headline TEXT"))
+        conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS reading_headline TEXT"))
+
         # Users table
         conn.execute(text(USER_TABLE_SCHEMA))
         # Ensure profile columns exist for legacy databases
@@ -138,12 +150,32 @@ def init_db():
 
         # Compatibility readings table
         conn.execute(text(COMPATIBILITY_TABLE_SCHEMA))
+        conn.execute(text("ALTER TABLE compatibility_readings ADD COLUMN IF NOT EXISTS preview_persona_id TEXT"))
+        conn.execute(text("ALTER TABLE compatibility_readings ADD COLUMN IF NOT EXISTS reading_persona_id TEXT"))
+        conn.execute(text("ALTER TABLE compatibility_readings ADD COLUMN IF NOT EXISTS preview_llm_profile_id TEXT"))
+        conn.execute(text("ALTER TABLE compatibility_readings ADD COLUMN IF NOT EXISTS reading_llm_profile_id TEXT"))
+        conn.execute(text("ALTER TABLE compatibility_readings ADD COLUMN IF NOT EXISTS preview_prompt_version TEXT"))
+        conn.execute(text("ALTER TABLE compatibility_readings ADD COLUMN IF NOT EXISTS reading_prompt_version TEXT"))
+        conn.execute(text("ALTER TABLE compatibility_readings ADD COLUMN IF NOT EXISTS preview_theme_tags JSONB"))
+        conn.execute(text("ALTER TABLE compatibility_readings ADD COLUMN IF NOT EXISTS reading_theme_tags JSONB"))
+        conn.execute(text("ALTER TABLE compatibility_readings ADD COLUMN IF NOT EXISTS preview_headline TEXT"))
+        conn.execute(text("ALTER TABLE compatibility_readings ADD COLUMN IF NOT EXISTS reading_headline TEXT"))
 
         # Blessing offerings table
         conn.execute(text(BLESSING_OFFERINGS_TABLE_SCHEMA))
 
         # Feng Shui analyses table
         conn.execute(text(FENG_SHUI_TABLE_SCHEMA))
+        conn.execute(text("ALTER TABLE feng_shui_analyses ADD COLUMN IF NOT EXISTS preview_persona_id TEXT"))
+        conn.execute(text("ALTER TABLE feng_shui_analyses ADD COLUMN IF NOT EXISTS analysis_persona_id TEXT"))
+        conn.execute(text("ALTER TABLE feng_shui_analyses ADD COLUMN IF NOT EXISTS preview_llm_profile_id TEXT"))
+        conn.execute(text("ALTER TABLE feng_shui_analyses ADD COLUMN IF NOT EXISTS analysis_llm_profile_id TEXT"))
+        conn.execute(text("ALTER TABLE feng_shui_analyses ADD COLUMN IF NOT EXISTS preview_prompt_version TEXT"))
+        conn.execute(text("ALTER TABLE feng_shui_analyses ADD COLUMN IF NOT EXISTS analysis_prompt_version TEXT"))
+        conn.execute(text("ALTER TABLE feng_shui_analyses ADD COLUMN IF NOT EXISTS preview_theme_tags JSONB"))
+        conn.execute(text("ALTER TABLE feng_shui_analyses ADD COLUMN IF NOT EXISTS analysis_theme_tags JSONB"))
+        conn.execute(text("ALTER TABLE feng_shui_analyses ADD COLUMN IF NOT EXISTS preview_headline TEXT"))
+        conn.execute(text("ALTER TABLE feng_shui_analyses ADD COLUMN IF NOT EXISTS analysis_headline TEXT"))
 
         # Verified purchase ledger for account-wide entitlements and restore flows
         conn.execute(text("""
@@ -1621,12 +1653,21 @@ def generate_preview(
             preview["meta"] = llm_result["meta"]
 
         # Update session
-        db_update_session(
-            session_id,
-            preview=preview,
-            status="preview_ready",
-            preview_cost_usd=llm_result["cost_usd"]
-        )
+        session_updates = {
+            "preview": preview,
+            "status": "preview_ready",
+            "preview_cost_usd": llm_result["cost_usd"],
+        }
+        if isinstance(llm_result.get("meta"), dict):
+            meta = llm_result["meta"]
+            session_updates.update(
+                preview_persona_id=meta.get("persona_id"),
+                preview_llm_profile_id=meta.get("llm_profile_id"),
+                preview_prompt_version=meta.get("prompt_version"),
+                preview_theme_tags=meta.get("theme_tags") or [],
+                preview_headline=meta.get("headline"),
+            )
+        db_update_session(session_id, **session_updates)
 
         return {"status": "preview_ready", "preview": preview}
 

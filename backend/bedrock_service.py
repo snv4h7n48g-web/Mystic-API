@@ -50,8 +50,8 @@ class BedrockService:
         }
     
     def _build_messages(
-        self, 
-        system_prompt: str, 
+        self,
+        system_prompt: str,
         user_content: str
     ) -> tuple[str, List[Dict[str, Any]]]:
         """
@@ -71,6 +71,18 @@ class BedrockService:
             }
         ]
         return system_prompt, messages
+
+    def _build_message_list(
+        self,
+        user_messages: List[str],
+    ) -> List[Dict[str, Any]]:
+        return [
+            {
+                "role": "user",
+                "content": [{"text": message}],
+            }
+            for message in user_messages
+        ]
     
     def _calculate_cost(
         self, 
@@ -97,6 +109,44 @@ class BedrockService:
         output_cost = (output_tokens / 1000) * cost_per_1k['output']
         
         return round(input_cost + output_cost, 6)
+
+    def invoke_text(
+        self,
+        *,
+        model_id: str,
+        system_prompt: str,
+        user_messages: List[str],
+        temperature: float,
+        top_p: float,
+        max_tokens: int,
+    ) -> Dict[str, Any]:
+        messages = self._build_message_list(user_messages)
+        try:
+            response = self.client.converse(
+                modelId=model_id,
+                messages=messages,
+                system=[{"text": system_prompt}],
+                inferenceConfig={
+                    "maxTokens": max_tokens,
+                    "temperature": temperature,
+                    "topP": top_p,
+                },
+            )
+            output_text = response['output']['message']['content'][0]['text']
+            usage = response.get('usage', {})
+            input_tokens = usage.get('inputTokens', 0)
+            output_tokens = usage.get('outputTokens', 0)
+            cost = self._calculate_cost(model_id, input_tokens, output_tokens)
+            return {
+                'text': output_text.strip(),
+                'input_tokens': input_tokens,
+                'output_tokens': output_tokens,
+                'cost_usd': cost,
+                'model': model_id,
+                'raw': response,
+            }
+        except Exception as e:
+            raise RuntimeError(f"Bedrock text generation failed: {str(e)}")
     
     def _build_reference_block(self) -> str:
         return (

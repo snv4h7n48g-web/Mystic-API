@@ -1,3 +1,4 @@
+from bedrock_service import BedrockService
 from generation.parser import GenerationParseError, parse_normalized_output
 from generation.prompts.composer import compose_generation_prompt
 from generation.routing.persona_router import choose_persona
@@ -59,3 +60,35 @@ def test_choose_persona_routes_feng_shui_to_practical_astrologer() -> None:
     )
 
     assert persona == "practical_astrologer"
+
+
+def test_invoke_text_uses_bedrock_converse_and_returns_usage() -> None:
+    service = BedrockService.__new__(BedrockService)
+    service.costs = {
+        "test-model": {"input": 0.001, "output": 0.002},
+    }
+
+    class FakeClient:
+        def converse(self, **kwargs):
+            assert kwargs["modelId"] == "test-model"
+            assert kwargs["inferenceConfig"]["temperature"] == 0.8
+            return {
+                "output": {"message": {"content": [{"text": '{"opening_hook":"A","current_pattern":"B","emotional_truth":"C","practical_guidance":"D","continuity_callback":null,"next_return_invitation":"E","premium_teaser":"F","theme_tags":["x"]}'}]}},
+                "usage": {"inputTokens": 12, "outputTokens": 34},
+            }
+
+    service.client = FakeClient()
+
+    result = service.invoke_text(
+        model_id="test-model",
+        system_prompt="system",
+        user_messages=["one", "two"],
+        temperature=0.8,
+        top_p=0.9,
+        max_tokens=123,
+    )
+
+    assert result["model"] == "test-model"
+    assert result["input_tokens"] == 12
+    assert result["output_tokens"] == 34
+    assert result["text"].startswith('{"opening_hook"')
