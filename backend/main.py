@@ -1748,6 +1748,7 @@ def generate_reading(
         preview = session.get("preview") or {}
         astrology_facts = preview["astrology_facts"]
         tarot_cards = preview["tarot"]["cards"]
+        tarot_payload = preview.get("tarot") or {"spread": "none", "cards": tarot_cards}
         
         inputs = session.get("inputs") or {}
         question = inputs["question_intention"]
@@ -1773,19 +1774,6 @@ def generate_reading(
 
         # Get services
         astro_engine = get_astrology_engine()
-        # Generate full reading using Bedrock
-        llm_result = bedrock.generate_full_reading(
-            question=question,
-            astrology_facts=astrology_facts,
-            tarot_cards=tarot_cards,
-            palm_facts=palm_features,
-            style=style,
-            flow_type=flow_type,
-            include_palm=content_contract["include_palm"],
-        )
-
-        # Build reading response
-        generated_at = datetime.now(timezone.utc).isoformat()
         includes_palm = content_contract["include_palm"]
         purchased = session.get("purchased_products") or []
         inputs = session.get("inputs") or {}
@@ -1795,24 +1783,67 @@ def generate_reading(
             _user_has_feature_access(user, purchased, "deep")
             or inputs.get("deep_access") is True
         )
-        reading = {
-            "sections": llm_result["sections"],
-            "full_text": llm_result["full_text"],
-            "metadata": {
-                "dominant_themes": ["responsibility", "transformation"],  # TODO: extract from LLM
-                "tone": f"{style}-introspective",
-                "confidence": "medium",
-                "personalisation_score": 0.85,
-                "model": llm_result["model"],
-                "input_tokens": llm_result["input_tokens"],
-                "output_tokens": llm_result["output_tokens"],
-                "generated_at": generated_at,
-                "includes_palm": includes_palm,
-                "deep_access": deep_access,
-                "flow_type": flow_type,
-                "content_contract": content_contract,
+
+        if USE_PERSONA_ORCHESTRATION:
+            orchestrator = get_generation_orchestrator()
+            orchestration_result = orchestrator.build_session_reading_result(
+                session=session,
+                user=user,
+                astrology_facts=astrology_facts,
+                tarot_payload=tarot_payload,
+                palm_features=palm_features,
+                include_palm=includes_palm,
+                deep_access=deep_access,
+                content_contract=content_contract,
+            )
+            llm_result = {
+                "sections": orchestration_result.payload["sections"],
+                "full_text": orchestration_result.payload["full_text"],
+                "model": orchestration_result.metadata.model_id,
+                "input_tokens": orchestration_result.input_tokens,
+                "output_tokens": orchestration_result.output_tokens,
+                "cost_usd": orchestration_result.cost_usd,
+                "meta": {
+                    "persona_id": orchestration_result.metadata.persona_id,
+                    "llm_profile_id": orchestration_result.metadata.llm_profile_id,
+                    "prompt_version": orchestration_result.metadata.prompt_version,
+                    "theme_tags": orchestration_result.metadata.theme_tags,
+                    "headline": orchestration_result.metadata.headline,
+                    "continuity_source_session_id": orchestration_result.metadata.continuity_source_session_id,
+                },
             }
-        }
+            reading = orchestration_result.payload
+        else:
+            llm_result = bedrock.generate_full_reading(
+                question=question,
+                astrology_facts=astrology_facts,
+                tarot_cards=tarot_cards,
+                palm_facts=palm_features,
+                style=style,
+                flow_type=flow_type,
+                include_palm=includes_palm,
+            )
+
+            # Build reading response
+            generated_at = datetime.now(timezone.utc).isoformat()
+            reading = {
+                "sections": llm_result["sections"],
+                "full_text": llm_result["full_text"],
+                "metadata": {
+                    "dominant_themes": ["responsibility", "transformation"],  # TODO: extract from LLM
+                    "tone": f"{style}-introspective",
+                    "confidence": "medium",
+                    "personalisation_score": 0.85,
+                    "model": llm_result["model"],
+                    "input_tokens": llm_result["input_tokens"],
+                    "output_tokens": llm_result["output_tokens"],
+                    "generated_at": generated_at,
+                    "includes_palm": includes_palm,
+                    "deep_access": deep_access,
+                    "flow_type": flow_type,
+                    "content_contract": content_contract,
+                }
+            }
 
         # Lunar New Year Forecast add-on is explicit content, not implied by subscription.
         lunar_included = (
@@ -1857,12 +1888,22 @@ def generate_reading(
         reading["metadata"]["subscription_active"] = subscription_included
 
         # Update session
-        db_update_session(
-            session_id,
-            reading=reading,
-            status="complete",
-            reading_cost_usd=llm_result["cost_usd"]
-        )
+        reading_updates = {
+            "reading": reading,
+            "status": "complete",
+            "reading_cost_usd": llm_result["cost_usd"],
+        }
+        if isinstance(llm_result.get("meta"), dict):
+            meta = llm_result["meta"]
+            reading_updates.update(
+                reading_persona_id=meta.get("persona_id"),
+                reading_llm_profile_id=meta.get("llm_profile_id"),
+                reading_prompt_version=meta.get("prompt_version"),
+                reading_theme_tags=meta.get("theme_tags") or [],
+                reading_headline=meta.get("headline"),
+                continuity_source_session_id=meta.get("continuity_source_session_id"),
+            )
+        db_update_session(session_id, **reading_updates)
 
         return {"status": "complete", "reading": reading}
 

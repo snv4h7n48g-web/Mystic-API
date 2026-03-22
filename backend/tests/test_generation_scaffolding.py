@@ -1,8 +1,9 @@
 from bedrock_service import BedrockService
+from generation.formatting.reading_formatter import build_reading_payload
 from generation.parser import GenerationParseError, parse_normalized_output
 from generation.prompts.composer import compose_generation_prompt
 from generation.routing.persona_router import choose_persona
-from generation.types import GenerationContext
+from generation.types import GenerationContext, GenerationMetadata
 
 
 def test_compose_generation_prompt_includes_persona_flow_and_schema() -> None:
@@ -92,3 +93,35 @@ def test_invoke_text_uses_bedrock_converse_and_returns_usage() -> None:
     assert result["input_tokens"] == 12
     assert result["output_tokens"] == 34
     assert result["text"].startswith('{"opening_hook"')
+
+
+def test_build_reading_payload_includes_continuity_and_metadata() -> None:
+    normalized = parse_normalized_output(
+        """
+        {
+          "opening_hook": "A pattern is gathering.",
+          "current_pattern": "You are between hesitation and action.",
+          "emotional_truth": "You already know what matters.",
+          "practical_guidance": "Choose the clearest next step.",
+          "continuity_callback": "This echoes your last theme of clarity.",
+          "next_return_invitation": "Come back tomorrow.",
+          "premium_teaser": "There is another layer here.",
+          "theme_tags": ["clarity", "change"]
+        }
+        """
+    )
+    metadata = GenerationMetadata(
+        persona_id="ancient_tarot_reader",
+        llm_profile_id="full_premium",
+        prompt_version="mystic-v1",
+        model_id="claude-opus",
+        theme_tags=["clarity", "change"],
+        headline="A pattern is gathering.",
+    )
+
+    payload = build_reading_payload(normalized=normalized, metadata=metadata)
+
+    assert payload["sections"][0]["id"] == "opening_hook"
+    assert any(section["id"] == "continuity_callback" for section in payload["sections"])
+    assert payload["metadata"]["persona_id"] == "ancient_tarot_reader"
+    assert payload["metadata"]["llm_profile_id"] == "full_premium"
