@@ -168,7 +168,8 @@ def init_db():
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_purchase_transactions_original ON purchase_transactions(original_transaction_id)"))
 
 
-init_db()
+if not _env_flag("SKIP_DB_INIT", False):
+    init_db()
 
 # =====================
 # MODELS
@@ -1090,6 +1091,39 @@ def _bundle_product_for_inputs(inputs: Dict[str, Any]) -> Optional[Dict[str, Any
         return None
 
     return product
+
+
+def _bundle_progress_summary(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    inputs = session.get("inputs") or {}
+    bundle_product = _bundle_product_for_inputs(inputs)
+    if not bundle_product:
+        return None
+
+    steps = [str(step) for step in bundle_product.get("bundle_steps", []) if str(step).strip()]
+    completed_raw = inputs.get("bundle_steps_completed") or []
+    completed = [str(step) for step in completed_raw if str(step).strip()] if isinstance(completed_raw, list) else []
+    current_step = (inputs.get("bundle_step") or "").strip()
+
+    next_step = None
+    for step in steps:
+        if step not in completed:
+            next_step = step
+            break
+
+    return {
+        "bundle_id": bundle_product.get("id"),
+        "bundle_name": bundle_product.get("name"),
+        "bundle_steps": steps,
+        "bundle_steps_completed": completed,
+        "completed_count": len([step for step in steps if step in completed]),
+        "total_steps": len(steps),
+        "current_step": current_step or next_step,
+        "next_step": next_step,
+        "complete": next_step is None and bool(steps),
+        "session_id": str(session.get("id")),
+        "question_intention": (inputs.get("question_intention") or "").strip(),
+        "updated_from_status": session.get("status"),
+    }
 
 
 def _required_session_product_id(session: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -2950,6 +2984,126 @@ def link_session_to_account(
     }
 
 
+@app.get("/v1/users/me/continuity")
+def get_user_continuity(user: dict = Depends(get_current_user)):
+    """Account-level continuity summary for revisit and unfinished journey flows."""
+    user_service = get_user_service()
+    sessions = user_service.get_user_sessions(user_id=str(user["id"]), limit=250)
+
+    latest_reading = None
+    unfinished_sessions: List[Dict[str, Any]] = []
+    bundle_progress: List[Dict[str, Any]] = []
+
+    for session in sessions:
+        reading = _extract_reading(session)
+        preview = _extract_preview(session)
+        inputs = session.get("inputs") or {}
+        status = (session.get("status") or "").strip().lower()
+
+        if reading and latest_reading is None:
+            latest_reading = {
+                "session_id": str(session.get("id")),
+                "created_at": session.get("created_at").isoformat() if session.get("created_at") else None,
+                "question_intention": (inputs.get("question_intention") or "").strip(),
+                "flow_type": _flow_type(inputs),
+                "status": status,
+            }
+
+        if not reading and (preview or status in {"draft", "preview_ready"}):
+            unfinished_sessions.append({
+                "session_id": str(session.get("id")),
+                "created_at": session.get("created_at").isoformat() if session.get("created_at") else None,
+                "question_intention": (inputs.get("question_intention") or "").strip(),
+                "flow_type": _flow_type(inputs),
+                "status": status,
+                "has_preview": preview is not None,
+                "bundle_id": inputs.get("bundle_id"),
+                "bundle_step": inputs.get("bundle_step"),
+            })
+
+        progress = _bundle_progress_summary(session)
+        if progress and not progress.get("complete"):
+            bundle_progress.append(progress)
+
+    ongoing_journeys: List[Dict[str, Any]] = []
+
+    with engine.begin() as conn:
+        compatibility_rows = conn.execute(
+            text(
+                """
+                SELECT id, created_at, purchased, preview, reading
+                FROM compatibility_readings
+                WHERE user_id = CAST(:user_id AS uuid)
+                ORDER BY created_at DESC
+                LIMIT 20
+                """
+            ),
+            {"user_id": str(user["id"])}
+        ).mappings().all()
+
+        for row in compatibility_rows:
+            if row.get("reading"):
+                continue
+            stage = "preview_ready" if row.get("preview") else "input_started"
+            if row.get("purchased") and not row.get("reading"):
+                stage = "ready_to_generate"
+            ongoing_journeys.append({
+                "type": "compatibility",
+                "id": str(row.get("id")),
+                "created_at": row.get("created_at").isoformat() if row.get("created_at") else None,
+                "stage": stage,
+                "title": "Compatibility reading in progress",
+            })
+
+        feng_rows = conn.execute(
+            text(
+                """
+                SELECT id, created_at, analysis_type, purchased, preview, analysis
+                FROM feng_shui_analyses
+                WHERE user_id = CAST(:user_id AS uuid)
+                ORDER BY created_at DESC
+                LIMIT 20
+                """
+            ),
+            {"user_id": str(user["id"])}
+        ).mappings().all()
+
+        for row in feng_rows:
+            if row.get("analysis"):
+                continue
+            stage = "preview_ready" if row.get("preview") else "input_started"
+            if row.get("purchased") and not row.get("analysis"):
+                stage = "ready_to_generate"
+            ongoing_journeys.append({
+                "type": "feng_shui",
+                "id": str(row.get("id")),
+                "created_at": row.get("created_at").isoformat() if row.get("created_at") else None,
+                "stage": stage,
+                "analysis_type": row.get("analysis_type"),
+                "title": "Feng Shui journey in progress",
+            })
+
+    cadence_hint = "return_this_week"
+    if unfinished_sessions:
+        cadence_hint = "return_tomorrow" if any(item.get("has_preview") for item in unfinished_sessions) else "return_this_week"
+    elif latest_reading:
+        flow_type = (latest_reading.get("flow_type") or "").lower()
+        cadence_hint = "return_tomorrow" if flow_type in {"combined", "daily_horoscope"} else "return_this_week"
+
+    return {
+        "latest_reading": latest_reading,
+        "unfinished_sessions": unfinished_sessions[:5],
+        "bundle_progress": bundle_progress[:5],
+        "ongoing_journeys": ongoing_journeys[:6],
+        "counts": {
+            "unfinished_sessions": len(unfinished_sessions),
+            "bundle_progress": len(bundle_progress),
+            "ongoing_journeys": len(ongoing_journeys),
+        },
+        "cadence_hint": cadence_hint,
+    }
+
+
 @app.get("/v1/users/me/stats")
 def get_user_stats(user: dict = Depends(get_current_user)):
     """Get user's reading statistics and spending."""
@@ -3250,6 +3404,55 @@ def refresh_entitlements(user: dict = Depends(get_current_user)):
             }
             for row in transactions
         ],
+    }
+
+
+@app.post("/v1/entitlements/restore")
+def restore_entitlement(
+    payload: PurchaseRequest,
+    user: dict = Depends(get_current_user)
+):
+    """Restore an already-purchased entitlement onto the authenticated account."""
+    product = PRODUCTS.get(payload.product_id)
+    if not product:
+        raise HTTPException(400, "Invalid product ID")
+    if product.get("is_subscription"):
+        raise HTTPException(400, "Use /v1/subscription/activate for subscription restores")
+
+    verification = _verify_purchase_or_raise(
+        product_id=payload.product_id,
+        transaction_id=payload.transaction_id,
+        receipt_data=payload.receipt_data,
+        is_subscription=False,
+        platform=payload.platform,
+    )
+
+    db_record_purchase_transaction(
+        user_id=str(user["id"]),
+        product_id=payload.product_id,
+        transaction_id=verification.transaction_id,
+        original_transaction_id=verification.original_transaction_id,
+        platform=payload.platform,
+        provider=verification.provider,
+        environment=verification.environment,
+        resource_type="restore",
+        resource_id=str(user["id"]),
+        entitlement_active=verification.entitlement_active,
+        verification_detail=verification.detail,
+        receipt_present=bool((payload.receipt_data or "").strip()),
+        raw=verification.raw,
+    )
+
+    return {
+        "status": "restored",
+        "product_id": payload.product_id,
+        "transaction_id": verification.transaction_id,
+        "verification": {
+            "provider": verification.provider,
+            "environment": verification.environment,
+            "entitlement_active": verification.entitlement_active,
+            "original_transaction_id": verification.original_transaction_id,
+        },
     }
 
 
