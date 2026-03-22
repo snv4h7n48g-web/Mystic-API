@@ -2088,35 +2088,70 @@ def generate_compatibility_preview(
     zodiac2 = astro_engine.calculate_chinese_zodiac(birth_year_2)
     zodiac_harmony = _zodiac_compatibility(zodiac1, zodiac2)
 
-    llm_result = bedrock.generate_compatibility_preview(
-        person1={"profile": person1, "chart": chart1},
-        person2={"profile": person2, "chart": chart2},
-        synastry=synastry,
-        zodiac_compatibility=zodiac_harmony
-    )
-
     included = _compatibility_included_for_user(user)
-    preview = {
-        "teaser_text": llm_result["teaser_text"],
-        "person1": {"profile": person1, "chart": chart1, "zodiac": zodiac1},
-        "person2": {"profile": person2, "chart": chart2, "zodiac": zodiac2},
-        "synastry": synastry,
-        "unlock_price": {"currency": "USD", "amount": 0.0 if included else 3.99},
-        "product_id": ProductSKU.COMPATIBILITY,
-        "entitlements": {
-            "subscription_active": _has_active_subscription(user),
-            "bundle_active": _user_has_any_product(user, [ProductSKU.BUNDLE_LIFE_HARMONY]),
-            "included": included,
-        },
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "llm_metadata": {
-            "model": llm_result["model"],
-            "input_tokens": llm_result["input_tokens"],
-            "output_tokens": llm_result["output_tokens"]
-        }
+    entitlements = {
+        "subscription_active": _has_active_subscription(user),
+        "bundle_active": _user_has_any_product(user, [ProductSKU.BUNDLE_LIFE_HARMONY]),
+        "included": included,
     }
 
-    db_update_compatibility(compat_id, preview=preview)
+    if USE_PERSONA_ORCHESTRATION:
+        orchestrator = get_generation_orchestrator()
+        orchestration_result = orchestrator.build_compatibility_preview_result(
+            compat=compat,
+            user=user,
+            person1=person1,
+            person2=person2,
+            chart1=chart1,
+            chart2=chart2,
+            zodiac1=zodiac1,
+            zodiac2=zodiac2,
+            synastry=synastry,
+            zodiac_harmony=zodiac_harmony,
+            entitlements=entitlements,
+        )
+        preview = orchestration_result.payload
+        preview["product_id"] = ProductSKU.COMPATIBILITY
+        preview["generated_at"] = datetime.now(timezone.utc).isoformat()
+        preview["llm_metadata"] = {
+            "model": orchestration_result.metadata.model_id,
+            "input_tokens": orchestration_result.input_tokens,
+            "output_tokens": orchestration_result.output_tokens,
+        }
+        db_update_compatibility(
+            compat_id,
+            preview=preview,
+            preview_persona_id=orchestration_result.metadata.persona_id,
+            preview_llm_profile_id=orchestration_result.metadata.llm_profile_id,
+            preview_prompt_version=orchestration_result.metadata.prompt_version,
+            preview_theme_tags=orchestration_result.metadata.theme_tags,
+            preview_headline=orchestration_result.metadata.headline,
+        )
+    else:
+        llm_result = bedrock.generate_compatibility_preview(
+            person1={"profile": person1, "chart": chart1},
+            person2={"profile": person2, "chart": chart2},
+            synastry=synastry,
+            zodiac_compatibility=zodiac_harmony
+        )
+
+        preview = {
+            "teaser_text": llm_result["teaser_text"],
+            "person1": {"profile": person1, "chart": chart1, "zodiac": zodiac1},
+            "person2": {"profile": person2, "chart": chart2, "zodiac": zodiac2},
+            "synastry": synastry,
+            "unlock_price": {"currency": "USD", "amount": 0.0 if included else 3.99},
+            "product_id": ProductSKU.COMPATIBILITY,
+            "entitlements": entitlements,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "llm_metadata": {
+                "model": llm_result["model"],
+                "input_tokens": llm_result["input_tokens"],
+                "output_tokens": llm_result["output_tokens"]
+            }
+        }
+
+        db_update_compatibility(compat_id, preview=preview)
     return {"status": "preview_ready", "preview": preview}
 
 
@@ -2225,25 +2260,55 @@ def generate_compatibility_reading(
     zodiac2 = astro_engine.calculate_chinese_zodiac(birth_year_2)
     zodiac_harmony = _zodiac_compatibility(zodiac1, zodiac2)
 
-    llm_result = bedrock.generate_compatibility_reading(
-        person1={"profile": person1, "chart": chart1},
-        person2={"profile": person2, "chart": chart2},
-        synastry=synastry,
-        zodiac_compatibility=zodiac_harmony
-    )
+    if USE_PERSONA_ORCHESTRATION:
+        orchestrator = get_generation_orchestrator()
+        orchestration_result = orchestrator.build_compatibility_reading_result(
+            compat=compat,
+            user=user,
+            person1=person1,
+            person2=person2,
+            chart1=chart1,
+            chart2=chart2,
+            synastry=synastry,
+            zodiac_harmony=zodiac_harmony,
+        )
+        reading = orchestration_result.payload
+        reading["metadata"].update(
+            {
+                "model": orchestration_result.metadata.model_id,
+                "input_tokens": orchestration_result.input_tokens,
+                "output_tokens": orchestration_result.output_tokens,
+            }
+        )
+        db_update_compatibility(
+            compat_id,
+            reading=reading,
+            reading_persona_id=orchestration_result.metadata.persona_id,
+            reading_llm_profile_id=orchestration_result.metadata.llm_profile_id,
+            reading_prompt_version=orchestration_result.metadata.prompt_version,
+            reading_theme_tags=orchestration_result.metadata.theme_tags,
+            reading_headline=orchestration_result.metadata.headline,
+        )
+    else:
+        llm_result = bedrock.generate_compatibility_reading(
+            person1={"profile": person1, "chart": chart1},
+            person2={"profile": person2, "chart": chart2},
+            synastry=synastry,
+            zodiac_compatibility=zodiac_harmony
+        )
 
-    reading = {
-        "sections": llm_result["sections"],
-        "full_text": llm_result["full_text"],
-        "metadata": {
-            "model": llm_result["model"],
-            "input_tokens": llm_result["input_tokens"],
-            "output_tokens": llm_result["output_tokens"],
-            "generated_at": datetime.now(timezone.utc).isoformat()
+        reading = {
+            "sections": llm_result["sections"],
+            "full_text": llm_result["full_text"],
+            "metadata": {
+                "model": llm_result["model"],
+                "input_tokens": llm_result["input_tokens"],
+                "output_tokens": llm_result["output_tokens"],
+                "generated_at": datetime.now(timezone.utc).isoformat()
+            }
         }
-    }
 
-    db_update_compatibility(compat_id, reading=reading)
+        db_update_compatibility(compat_id, reading=reading)
     return {"status": "complete", "reading": reading}
 
 
