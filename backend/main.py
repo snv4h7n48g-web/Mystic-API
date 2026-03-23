@@ -2120,39 +2120,44 @@ def generate_compatibility_preview(
         "included": included,
     }
 
+    preview = None
     if USE_PERSONA_ORCHESTRATION:
-        orchestrator = get_generation_orchestrator()
-        orchestration_result = orchestrator.build_compatibility_preview_result(
-            compat=compat,
-            user=user,
-            person1=person1,
-            person2=person2,
-            chart1=chart1,
-            chart2=chart2,
-            zodiac1=zodiac1,
-            zodiac2=zodiac2,
-            synastry=synastry,
-            zodiac_harmony=zodiac_harmony,
-            entitlements=entitlements,
-        )
-        preview = orchestration_result.payload
-        preview["product_id"] = ProductSKU.COMPATIBILITY
-        preview["generated_at"] = datetime.now(timezone.utc).isoformat()
-        preview["llm_metadata"] = {
-            "model": orchestration_result.metadata.model_id,
-            "input_tokens": orchestration_result.input_tokens,
-            "output_tokens": orchestration_result.output_tokens,
-        }
-        db_update_compatibility(
-            compat_id,
-            preview=preview,
-            preview_persona_id=orchestration_result.metadata.persona_id,
-            preview_llm_profile_id=orchestration_result.metadata.llm_profile_id,
-            preview_prompt_version=orchestration_result.metadata.prompt_version,
-            preview_theme_tags=orchestration_result.metadata.theme_tags,
-            preview_headline=orchestration_result.metadata.headline,
-        )
-    else:
+        try:
+            orchestrator = get_generation_orchestrator()
+            orchestration_result = orchestrator.build_compatibility_preview_result(
+                compat=compat,
+                user=user,
+                person1=person1,
+                person2=person2,
+                chart1=chart1,
+                chart2=chart2,
+                zodiac1=zodiac1,
+                zodiac2=zodiac2,
+                synastry=synastry,
+                zodiac_harmony=zodiac_harmony,
+                entitlements=entitlements,
+            )
+            preview = orchestration_result.payload
+            preview["product_id"] = ProductSKU.COMPATIBILITY
+            preview["generated_at"] = datetime.now(timezone.utc).isoformat()
+            preview["llm_metadata"] = {
+                "model": orchestration_result.metadata.model_id,
+                "input_tokens": orchestration_result.input_tokens,
+                "output_tokens": orchestration_result.output_tokens,
+            }
+            db_update_compatibility(
+                compat_id,
+                preview=preview,
+                preview_persona_id=orchestration_result.metadata.persona_id,
+                preview_llm_profile_id=orchestration_result.metadata.llm_profile_id,
+                preview_prompt_version=orchestration_result.metadata.prompt_version,
+                preview_theme_tags=orchestration_result.metadata.theme_tags,
+                preview_headline=orchestration_result.metadata.headline,
+            )
+        except Exception as exc:
+            print(f"Compatibility preview orchestration failed for {compat_id}: {exc}")
+
+    if preview is None:
         llm_result = bedrock.generate_compatibility_preview(
             person1={"profile": person1, "chart": chart1},
             person2={"profile": person2, "chart": chart2},
