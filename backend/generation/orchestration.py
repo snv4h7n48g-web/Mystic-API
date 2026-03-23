@@ -10,7 +10,7 @@ from .personas import get_persona
 from .profiles import get_llm_profile
 from .prompts.composer import compose_generation_prompt
 from .routing.persona_router import choose_persona
-from .types import GenerationContext, GenerationMetadata, OrchestrationResult
+from .types import GenerationContext, GenerationMetadata, NormalizedMysticOutput, OrchestrationResult
 
 
 class MysticGenerationOrchestrator:
@@ -19,6 +19,33 @@ class MysticGenerationOrchestrator:
     This class intentionally keeps behavior minimal until individual endpoints
     are cut over behind feature flags.
     """
+
+    def _build_daily_horoscope_reading_payload(
+        self,
+        *,
+        normalized: NormalizedMysticOutput,
+        metadata: GenerationMetadata,
+    ) -> dict:
+        sections = [
+            {"id": "today_theme", "title": "TODAY'S THEME", "text": normalized.opening_hook},
+            {"id": "today_energy", "title": "TODAY'S ENERGY", "text": normalized.current_pattern},
+            {"id": "best_move", "title": "BEST MOVE", "text": normalized.practical_guidance},
+            {"id": "watch_out_for", "title": "WATCH OUT FOR", "text": normalized.emotional_truth},
+            {"id": "closing_guidance", "title": "CLOSING GUIDANCE", "text": normalized.next_return_invitation},
+        ]
+        full_text = "\n\n".join(section["text"] for section in sections if section["text"])
+        return {
+            "sections": sections,
+            "full_text": full_text,
+            "metadata": {
+                "persona_id": metadata.persona_id,
+                "llm_profile_id": metadata.llm_profile_id,
+                "prompt_version": metadata.prompt_version,
+                "theme_tags": metadata.theme_tags,
+                "headline": metadata.headline,
+                "model": metadata.model_id,
+            },
+        }
 
     def _invoke_normalized_generation(
         self,
@@ -134,7 +161,7 @@ class MysticGenerationOrchestrator:
         persona_id = choose_persona(context, continuity_context)
         normalized, metadata, result = self._invoke_normalized_generation(
             persona_id=persona_id,
-            flow_id="session_preview",
+            flow_id=("daily_horoscope_preview" if flow_type == "daily_horoscope" else "lunar_new_year_preview" if flow_type == "lunar_new_year_solo" else "session_preview"),
             continuity_context=continuity_context,
             domain_context={
                 "question": context.question,
@@ -186,7 +213,7 @@ class MysticGenerationOrchestrator:
         persona_id = choose_persona(context, continuity_context)
         normalized, metadata, result = self._invoke_normalized_generation(
             persona_id=persona_id,
-            flow_id="session_reading",
+            flow_id=("daily_horoscope_reading" if flow_type == "daily_horoscope" else "lunar_new_year_reading" if flow_type == "lunar_new_year_solo" else "session_reading"),
             continuity_context=continuity_context,
             domain_context={
                 "question": context.question,
@@ -202,7 +229,11 @@ class MysticGenerationOrchestrator:
             profile_id="full_premium",
         )
         metadata.continuity_source_session_id = context.session_id
-        payload = build_reading_payload(normalized=normalized, metadata=metadata)
+        payload = (
+            self._build_daily_horoscope_reading_payload(normalized=normalized, metadata=metadata)
+            if flow_type == "daily_horoscope"
+            else build_reading_payload(normalized=normalized, metadata=metadata)
+        )
         payload["metadata"].update(
             {
                 "includes_palm": include_palm,
