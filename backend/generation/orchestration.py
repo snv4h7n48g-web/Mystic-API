@@ -263,6 +263,23 @@ class MysticGenerationOrchestrator:
         result.payload = payload
         return result
 
+    def _build_feng_shui_context(
+        self,
+        *,
+        analysis: dict,
+        user: dict | None,
+        surface: str,
+    ) -> GenerationContext:
+        return GenerationContext(
+            object_id=str(analysis["id"]),
+            object_type="feng_shui",
+            flow_type="feng_shui",
+            surface=surface,
+            user_id=str(user["id"]) if user else None,
+            session_id=str(analysis["id"]),
+            question=analysis.get("user_goals"),
+        )
+
     def build_compatibility_reading_result(
         self,
         *,
@@ -293,6 +310,83 @@ class MysticGenerationOrchestrator:
         metadata.continuity_source_session_id = context.session_id
         payload = build_reading_payload(normalized=normalized, metadata=metadata)
         payload["metadata"].update({"flow_type": "compatibility"})
+        result.payload = payload
+        return result
+
+    def build_feng_shui_preview_result(
+        self,
+        *,
+        analysis: dict,
+        user: dict | None,
+        entitlements: dict,
+        product_id: str,
+        price_amount: float,
+    ) -> OrchestrationResult:
+        context = self._build_feng_shui_context(analysis=analysis, user=user, surface="preview")
+        continuity_context = build_continuity_context(user_id=context.user_id, session_id=context.session_id)
+        persona_id = choose_persona(context, continuity_context)
+        normalized, metadata, result = self._invoke_normalized_generation(
+            persona_id=persona_id,
+            flow_id="feng_shui_preview",
+            continuity_context=continuity_context,
+            domain_context={
+                "analysis_type": analysis.get("analysis_type"),
+                "room_purpose": analysis.get("room_purpose"),
+                "user_goals": analysis.get("user_goals"),
+                "compass_direction": analysis.get("compass_direction"),
+            },
+            profile_id="grounded_clarity",
+        )
+        payload = {
+            "teaser_text": " ".join(
+                part.strip()
+                for part in [normalized.opening_hook, normalized.current_pattern, normalized.premium_teaser]
+                if part and part.strip()
+            ),
+            "analysis_type": analysis.get("analysis_type") or "single_room",
+            "unlock_price": {
+                "currency": "USD",
+                "amount": 0.0 if entitlements.get("included") else price_amount,
+            },
+            "product_id": product_id,
+            "entitlements": entitlements,
+            "meta": {
+                "persona_id": metadata.persona_id,
+                "llm_profile_id": metadata.llm_profile_id,
+                "prompt_version": metadata.prompt_version,
+                "theme_tags": metadata.theme_tags,
+                "headline": metadata.headline,
+            },
+        }
+        result.payload = payload
+        return result
+
+    def build_feng_shui_analysis_result(
+        self,
+        *,
+        analysis: dict,
+        user: dict | None,
+        vision_result: dict,
+    ) -> OrchestrationResult:
+        context = self._build_feng_shui_context(analysis=analysis, user=user, surface="full")
+        continuity_context = build_continuity_context(user_id=context.user_id, session_id=context.session_id)
+        persona_id = choose_persona(context, continuity_context)
+        normalized, metadata, result = self._invoke_normalized_generation(
+            persona_id=persona_id,
+            flow_id="feng_shui_analysis",
+            continuity_context=continuity_context,
+            domain_context={
+                "analysis_type": analysis.get("analysis_type"),
+                "room_purpose": analysis.get("room_purpose"),
+                "user_goals": analysis.get("user_goals"),
+                "compass_direction": analysis.get("compass_direction"),
+                "vision_analysis": vision_result,
+            },
+            profile_id="grounded_clarity",
+        )
+        metadata.continuity_source_session_id = context.session_id
+        payload = build_reading_payload(normalized=normalized, metadata=metadata)
+        payload["metadata"].update({"flow_type": "feng_shui"})
         result.payload = payload
         return result
 

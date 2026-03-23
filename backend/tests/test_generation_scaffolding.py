@@ -76,6 +76,19 @@ def test_choose_persona_routes_compatibility_to_flirty_cosmic_guide() -> None:
     assert persona == "flirty_cosmic_guide"
 
 
+def test_choose_persona_routes_feng_shui_preview_to_practical_astrologer() -> None:
+    persona = choose_persona(
+        GenerationContext(
+            object_id="f1",
+            object_type="feng_shui",
+            flow_type="feng_shui",
+            surface="preview",
+        )
+    )
+
+    assert persona == "practical_astrologer"
+
+
 def test_invoke_text_uses_bedrock_converse_and_returns_usage() -> None:
     service = BedrockService.__new__(BedrockService)
     service.costs = {

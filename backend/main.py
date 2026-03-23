@@ -2418,26 +2418,50 @@ def generate_feng_shui_preview(
     }
 
     included = _feng_shui_included_for_user(user, product_id)
-    preview_payload = {
-        "teaser_text": "Your space suggests a few high-impact shifts. Unlock the full analysis for detailed recommendations.",
-        "analysis_type": analysis_type,
-        "unlock_price": {
-            "currency": "USD",
-            "amount": 0.0 if included else price_map[product_id],
-        },
-        "product_id": product_id,
-        "entitlements": {
-            "subscription_active": _has_active_subscription(user),
-            "bundle_active": _user_has_any_product(user, [
-                ProductSKU.BUNDLE_NEW_BEGINNINGS,
-                ProductSKU.BUNDLE_LIFE_HARMONY,
-            ]),
-            "included": included,
-        },
-        "generated_at": datetime.now(timezone.utc).isoformat()
+    entitlements = {
+        "subscription_active": _has_active_subscription(user),
+        "bundle_active": _user_has_any_product(user, [
+            ProductSKU.BUNDLE_NEW_BEGINNINGS,
+            ProductSKU.BUNDLE_LIFE_HARMONY,
+        ]),
+        "included": included,
     }
 
-    db_update_feng_shui(analysis_id, preview=preview_payload, product_id=product_id)
+    if USE_PERSONA_ORCHESTRATION:
+        orchestrator = get_generation_orchestrator()
+        orchestration_result = orchestrator.build_feng_shui_preview_result(
+            analysis=analysis,
+            user=user,
+            entitlements=entitlements,
+            product_id=product_id,
+            price_amount=price_map[product_id],
+        )
+        preview_payload = orchestration_result.payload
+        preview_payload["generated_at"] = datetime.now(timezone.utc).isoformat()
+        db_update_feng_shui(
+            analysis_id,
+            preview=preview_payload,
+            product_id=product_id,
+            preview_persona_id=orchestration_result.metadata.persona_id,
+            preview_llm_profile_id=orchestration_result.metadata.llm_profile_id,
+            preview_prompt_version=orchestration_result.metadata.prompt_version,
+            preview_theme_tags=orchestration_result.metadata.theme_tags,
+            preview_headline=orchestration_result.metadata.headline,
+        )
+    else:
+        preview_payload = {
+            "teaser_text": "Your space suggests a few high-impact shifts. Unlock the full analysis for detailed recommendations.",
+            "analysis_type": analysis_type,
+            "unlock_price": {
+                "currency": "USD",
+                "amount": 0.0 if included else price_map[product_id],
+            },
+            "product_id": product_id,
+            "entitlements": entitlements,
+            "generated_at": datetime.now(timezone.utc).isoformat()
+        }
+
+        db_update_feng_shui(analysis_id, preview=preview_payload, product_id=product_id)
     return {"status": "preview_ready", "preview": preview_payload}
 
 
@@ -2562,25 +2586,53 @@ def generate_feng_shui_analysis(
         context=context
     )
 
-    llm_result = bedrock.generate_feng_shui_analysis(
-        context=context,
-        vision_analysis=vision_result
-    )
+    if USE_PERSONA_ORCHESTRATION:
+        orchestrator = get_generation_orchestrator()
+        orchestration_result = orchestrator.build_feng_shui_analysis_result(
+            analysis=analysis,
+            user=user,
+            vision_result=vision_result,
+        )
+        analysis_payload = orchestration_result.payload
+        analysis_payload["metadata"].update(
+            {
+                "model": orchestration_result.metadata.model_id,
+                "input_tokens": orchestration_result.input_tokens,
+                "output_tokens": orchestration_result.output_tokens,
+                "cost_usd": orchestration_result.cost_usd,
+            }
+        )
+        llm_cost = orchestration_result.cost_usd
+        db_update_feng_shui(
+            analysis_id,
+            analysis=analysis_payload,
+            cost_usd=float(analysis.get("cost_usd") or 0) + llm_cost + vision_result["cost_usd"],
+            analysis_persona_id=orchestration_result.metadata.persona_id,
+            analysis_llm_profile_id=orchestration_result.metadata.llm_profile_id,
+            analysis_prompt_version=orchestration_result.metadata.prompt_version,
+            analysis_theme_tags=orchestration_result.metadata.theme_tags,
+            analysis_headline=orchestration_result.metadata.headline,
+        )
+    else:
+        llm_result = bedrock.generate_feng_shui_analysis(
+            context=context,
+            vision_analysis=vision_result
+        )
 
-    analysis_payload = {
-        "sections": llm_result["sections"],
-        "full_text": llm_result["full_text"],
-        "metadata": {
-            "model": llm_result["model"],
-            "input_tokens": llm_result["input_tokens"],
-            "output_tokens": llm_result["output_tokens"],
-            "cost_usd": llm_result["cost_usd"],
-            "generated_at": datetime.now(timezone.utc).isoformat()
+        analysis_payload = {
+            "sections": llm_result["sections"],
+            "full_text": llm_result["full_text"],
+            "metadata": {
+                "model": llm_result["model"],
+                "input_tokens": llm_result["input_tokens"],
+                "output_tokens": llm_result["output_tokens"],
+                "cost_usd": llm_result["cost_usd"],
+                "generated_at": datetime.now(timezone.utc).isoformat()
+            }
         }
-    }
 
-    total_cost = float(analysis.get("cost_usd") or 0) + llm_result["cost_usd"] + vision_result["cost_usd"]
-    db_update_feng_shui(analysis_id, analysis=analysis_payload, cost_usd=total_cost)
+        total_cost = float(analysis.get("cost_usd") or 0) + llm_result["cost_usd"] + vision_result["cost_usd"]
+        db_update_feng_shui(analysis_id, analysis=analysis_payload, cost_usd=total_cost)
     return {"status": "complete", "analysis": analysis_payload}
 
 
