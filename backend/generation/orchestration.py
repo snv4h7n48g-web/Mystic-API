@@ -33,7 +33,8 @@ class MysticGenerationOrchestrator:
             {"id": "watch_out_for", "title": "WATCH OUT FOR", "text": normalized.emotional_truth},
             {"id": "closing_guidance", "title": "CLOSING GUIDANCE", "text": normalized.next_return_invitation},
         ]
-        full_text = "\n\n".join(section["text"] for section in sections if section["text"])
+        sections = [section for section in sections if section["text"] and section["text"].strip()]
+        full_text = "\n\n".join(section["text"] for section in sections)
         return {
             "sections": sections,
             "full_text": full_text,
