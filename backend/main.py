@@ -323,9 +323,19 @@ def db_insert_session(row: dict):
 def db_update_session(session_id: str, **fields):
     sets = []
     params = {"id": session_id}
+    jsonb_fields = {
+        "inputs",
+        "tarot",
+        "preview",
+        "reading",
+        "palm_analysis",
+        "purchased_products",
+        "preview_theme_tags",
+        "reading_theme_tags",
+    }
 
     for k, v in fields.items():
-        if k in ["inputs", "tarot", "preview", "reading", "palm_analysis", "purchased_products"]:
+        if k in jsonb_fields:
             sets.append(f"{k} = CAST(:{k} AS jsonb)")
             params[k] = json.dumps(v)
         else:
@@ -455,9 +465,17 @@ def db_get_compatibility(compat_id: str) -> Optional[Dict[str, Any]]:
 def db_update_compatibility(compat_id: str, **fields):
     sets = []
     params = {"id": compat_id}
+    jsonb_fields = {
+        "person1_data",
+        "person2_data",
+        "preview",
+        "reading",
+        "preview_theme_tags",
+        "reading_theme_tags",
+    }
 
     for k, v in fields.items():
-        if k in ["person1_data", "person2_data", "preview", "reading"]:
+        if k in jsonb_fields:
             sets.append(f"{k} = CAST(:{k} AS jsonb)")
             params[k] = json.dumps(v)
         else:
@@ -513,9 +531,16 @@ def db_get_feng_shui(analysis_id: str) -> Optional[Dict[str, Any]]:
 def db_update_feng_shui(analysis_id: str, **fields):
     sets = []
     params = {"id": analysis_id}
+    jsonb_fields = {
+        "image_urls",
+        "preview",
+        "analysis",
+        "preview_theme_tags",
+        "analysis_theme_tags",
+    }
 
     for k, v in fields.items():
-        if k in ["image_urls", "preview", "analysis"]:
+        if k in jsonb_fields:
             sets.append(f"{k} = CAST(:{k} AS jsonb)")
             params[k] = json.dumps(v)
         else:
