@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Verify AWS Bedrock model access and configuration.
-Run this to check if Nova models are accessible.
+Run this to check if the legacy Nova path and optional Claude Opus persona path are accessible.
 """
 
 import boto3
@@ -98,63 +98,48 @@ def check_bedrock_service():
         print(f"✗ Error accessing Bedrock: {str(e)}")
         return False, None
 
-def check_nova_models(response):
-    """Check if Nova models are available."""
-    print_header("3. Checking Nova Model Availability")
-    
+def check_model_access(response):
+    """Check if required/desired models are available."""
+    print_header("3. Checking Model Availability")
+
     if not response:
         return False
-    
+
     models = response.get('modelSummaries', [])
-    
-    # Look for Nova models
-    nova_lite = None
-    nova_pro = None
-    
-    for model in models:
-        model_id = model.get('modelId', '')
-        model_name = model.get('modelName', '')
-        
-        if 'nova-lite' in model_id.lower():
-            nova_lite = model
-        elif 'nova-pro' in model_id.lower():
-            nova_pro = model
-    
-    if nova_lite:
-        print(f"✓ Nova Lite found: {nova_lite['modelId']}")
-        print(f"  Status: {nova_lite.get('modelLifecycle', {}).get('status', 'unknown')}")
-    else:
-        print("✗ Nova Lite not found")
-        print("\nNova Lite may not be available in your region or account")
-    
-    if nova_pro:
-        print(f"✓ Nova Pro found: {nova_pro['modelId']}")
-        print(f"  Status: {nova_pro.get('modelLifecycle', {}).get('status', 'unknown')}")
-    else:
-        print("✗ Nova Pro not found")
-        print("\nNova Pro may not be available in your region or account")
-    
-    if not nova_lite and not nova_pro:
-        print("\n⚠ Nova models not found in available models")
-        print("\nPossible reasons:")
-        print("  1. Nova models not available in your region")
-        print("  2. Model access not enabled in Bedrock console")
-        print("  3. Account doesn't have access to Nova models")
-        print("\nTo enable model access:")
-        print("  1. Go to: https://console.aws.amazon.com/bedrock/")
-        print("  2. Click 'Model access' in left sidebar")
-        print("  3. Click 'Manage model access'")
-        print("  4. Enable 'Amazon Nova Lite' and 'Amazon Nova Pro'")
-        print("  5. Wait for access to be granted (usually immediate)")
-        
+    model_by_id = {model.get('modelId', ''): model for model in models}
+
+    found_any = False
+    for label, env_name, fallback in [
+        ("Legacy preview", "BEDROCK_PREVIEW_MODEL", "us.amazon.nova-lite-v1:0"),
+        ("Legacy full", "BEDROCK_FULL_MODEL", "us.amazon.nova-pro-v1:0"),
+        ("Claude Opus", "BEDROCK_MODEL_CLAUDE_OPUS", ""),
+    ]:
+        target = os.getenv(env_name, fallback).strip()
+        if not target:
+            print(f"- {label}: not configured")
+            continue
+        model = model_by_id.get(target)
+        if model:
+            found_any = True
+            print(f"✓ {label} found: {target}")
+            print(f"  Status: {model.get('modelLifecycle', {}).get('status', 'unknown')}")
+        else:
+            print(f"✗ {label} not found: {target}")
+
+    if not found_any:
+        print("\n⚠ None of the configured target models were found in available models")
+        print("\nCheck:")
+        print("  1. Bedrock model access in your account/region")
+        print("  2. Exact model IDs in .env")
+        print("  3. AWS region alignment with granted access")
         return False
-    
+
     return True
 
 def test_inference():
     """Test actual model inference."""
     print_header("4. Testing Model Inference")
-    
+
     try:
         client = boto3.client(
             'bedrock-runtime',
@@ -162,18 +147,23 @@ def test_inference():
             aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
             aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
         )
-        
-        # Try a simple inference with Nova Lite
-        preview_model = os.getenv('BEDROCK_PREVIEW_MODEL', 'us.amazon.nova-lite-v1:0')
-        
-        print(f"Testing inference with: {preview_model}")
-        
+
+        persona_enabled = os.getenv('MYSTIC_USE_PERSONA_ORCHESTRATION', 'false').strip().lower() in {'1', 'true', 'yes', 'on'}
+        test_model = (
+            os.getenv('MYSTIC_LLM_PROFILE_PREVIEW_MODEL')
+            or os.getenv('BEDROCK_MODEL_CLAUDE_OPUS')
+            or os.getenv('BEDROCK_PREVIEW_MODEL', 'us.amazon.nova-lite-v1:0')
+        ).strip()
+
+        print(f"Testing inference with: {test_model}")
+        print(f"Persona orchestration enabled: {persona_enabled}")
+
         response = client.converse(
-            modelId=preview_model,
+            modelId=test_model,
             messages=[
                 {
                     "role": "user",
-                    "content": [{"text": "Say 'hello' in one word."}]
+                    "content": [{"text": "Say hello in one word."}]
                 }
             ],
             inferenceConfig={
@@ -181,15 +171,15 @@ def test_inference():
                 "temperature": 0.7
             }
         )
-        
+
         output = response['output']['message']['content'][0]['text']
         usage = response.get('usage', {})
-        
+
         print(f"✓ Inference successful!")
         print(f"  Response: {output}")
         print(f"  Input tokens: {usage.get('inputTokens', 0)}")
         print(f"  Output tokens: {usage.get('outputTokens', 0)}")
-        
+
         return True
         
     except client.exceptions.AccessDeniedException:
@@ -224,9 +214,9 @@ def main():
         print("\n❌ Cannot access Bedrock service")
         return 1
     
-    # Check Nova models
-    if not check_nova_models(response):
-        print("\n⚠ Nova models may not be accessible")
+    # Check configured models
+    if not check_model_access(response):
+        print("\n⚠ Configured models may not be accessible")
         print("You can still try running the API, but model calls will fail")
         return 1
     

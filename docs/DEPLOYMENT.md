@@ -32,7 +32,7 @@
 }
 ```
 
-### Step 2: Enable Nova Models
+### Step 2: Enable Bedrock Models
 
 1. Go to [Bedrock Console](https://console.aws.amazon.com/bedrock/)
 2. Click **Model access** (left sidebar)
@@ -40,6 +40,7 @@
 4. Enable:
    - ✅ Amazon Nova Lite
    - ✅ Amazon Nova Pro
+   - ✅ Claude Opus (the exact Bedrock Claude Opus variant available in your account/region)
 5. Click **Save changes**
 6. Wait for status to show "Access granted" (~30 seconds)
 
@@ -105,7 +106,9 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` and add your AWS credentials:
+Edit `.env` and add your AWS credentials.
+
+For the legacy/default path:
 
 ```env
 AWS_REGION=us-east-1
@@ -114,6 +117,19 @@ AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 BEDROCK_PREVIEW_MODEL=us.amazon.nova-lite-v1:0
 BEDROCK_FULL_MODEL=us.amazon.nova-pro-v1:0
 ```
+
+For the new persona orchestration path, also set:
+
+```env
+MYSTIC_USE_PERSONA_ORCHESTRATION=true
+BEDROCK_MODEL_CLAUDE_OPUS=YOUR_EXACT_CLAUDE_OPUS_BEDROCK_MODEL_ID
+MYSTIC_LLM_PROFILE_PREVIEW_MODEL=${BEDROCK_MODEL_CLAUDE_OPUS}
+MYSTIC_LLM_PROFILE_FULL_MODEL=${BEDROCK_MODEL_CLAUDE_OPUS}
+MYSTIC_LLM_PROFILE_DAILY_MODEL=${BEDROCK_MODEL_CLAUDE_OPUS}
+MYSTIC_LLM_PROFILE_GROUNDED_MODEL=${BEDROCK_MODEL_CLAUDE_OPUS}
+```
+
+If you want a cheaper mixed rollout later, you can point some of those profile vars at other Bedrock models instead.
 
 #### 4. Start Database
 
