@@ -121,16 +121,23 @@ class BedrockService:
         max_tokens: int,
     ) -> Dict[str, Any]:
         messages = self._build_message_list(user_messages)
+        inference_config: Dict[str, Any] = {
+            "maxTokens": max_tokens,
+            "temperature": temperature,
+        }
+        anthropic_opus_profile = (
+            model_id.startswith("us.anthropic.claude-opus")
+            or model_id.startswith("global.anthropic.claude-opus")
+            or model_id.startswith("anthropic.claude-opus")
+        )
+        if not anthropic_opus_profile:
+            inference_config["topP"] = top_p
         try:
             response = self.client.converse(
                 modelId=model_id,
                 messages=messages,
                 system=[{"text": system_prompt}],
-                inferenceConfig={
-                    "maxTokens": max_tokens,
-                    "temperature": temperature,
-                    "topP": top_p,
-                },
+                inferenceConfig=inference_config,
             )
             output_text = response['output']['message']['content'][0]['text']
             usage = response.get('usage', {})

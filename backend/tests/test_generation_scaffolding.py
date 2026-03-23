@@ -121,6 +121,36 @@ def test_invoke_text_uses_bedrock_converse_and_returns_usage() -> None:
     assert result["text"].startswith('{"opening_hook"')
 
 
+def test_invoke_text_omits_top_p_for_anthropic_opus_profiles() -> None:
+    service = BedrockService.__new__(BedrockService)
+    service.costs = {
+        "us.anthropic.claude-opus-4-6-v1": {"input": 0.001, "output": 0.002},
+    }
+
+    class FakeClient:
+        def converse(self, **kwargs):
+            assert kwargs["modelId"] == "us.anthropic.claude-opus-4-6-v1"
+            assert kwargs["inferenceConfig"]["temperature"] == 0.8
+            assert "topP" not in kwargs["inferenceConfig"]
+            return {
+                "output": {"message": {"content": [{"text": '{"opening_hook":"A","current_pattern":"B","emotional_truth":"C","practical_guidance":"D","continuity_callback":null,"next_return_invitation":"E","premium_teaser":"F","theme_tags":["x"]}'}]}},
+                "usage": {"inputTokens": 12, "outputTokens": 34},
+            }
+
+    service.client = FakeClient()
+
+    result = service.invoke_text(
+        model_id="us.anthropic.claude-opus-4-6-v1",
+        system_prompt="system",
+        user_messages=["one"],
+        temperature=0.8,
+        top_p=0.9,
+        max_tokens=123,
+    )
+
+    assert result["model"] == "us.anthropic.claude-opus-4-6-v1"
+
+
 def test_build_reading_payload_includes_continuity_and_metadata() -> None:
     normalized = parse_normalized_output(
         """
