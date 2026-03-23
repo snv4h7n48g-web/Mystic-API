@@ -128,6 +128,8 @@ class MysticGenerationOrchestrator:
         continuity_context = build_continuity_context(
             user_id=context.user_id,
             session_id=context.session_id,
+            current_flow_type=context.flow_type,
+            current_object_type=context.object_type,
         )
         persona_id = choose_persona(context, continuity_context)
         normalized, metadata, result = self._invoke_normalized_generation(
@@ -178,6 +180,8 @@ class MysticGenerationOrchestrator:
         continuity_context = build_continuity_context(
             user_id=context.user_id,
             session_id=context.session_id,
+            current_flow_type=context.flow_type,
+            current_object_type=context.object_type,
         )
         persona_id = choose_persona(context, continuity_context)
         normalized, metadata, result = self._invoke_normalized_generation(
