@@ -3,6 +3,8 @@ Feng Shui vision analysis using Bedrock Nova Pro (multimodal).
 """
 
 import os
+import random
+import time
 from typing import List, Dict, Any
 import boto3
 
@@ -55,16 +57,29 @@ Return JSON with:
                 }
             })
 
-        response = self.client.converse(
-            modelId=self.model_id,
-            messages=[{"role": "user", "content": user_content}],
-            system=[{"text": system_prompt}],
-            inferenceConfig={
-                "maxTokens": 800,
-                "temperature": 0.6,
-                "topP": 0.9
-            }
-        )
+        response = None
+        last_error = None
+        for attempt in range(3):
+            try:
+                response = self.client.converse(
+                    modelId=self.model_id,
+                    messages=[{"role": "user", "content": user_content}],
+                    system=[{"text": system_prompt}],
+                    inferenceConfig={
+                        "maxTokens": 800,
+                        "temperature": 0.6,
+                        "topP": 0.9
+                    }
+                )
+                break
+            except Exception as error:
+                last_error = error
+                if attempt == 2 or not self._is_throttled_error(error):
+                    raise
+                time.sleep((1.5 ** attempt) + random.uniform(0.25, 0.75))
+
+        if response is None:
+            raise last_error or RuntimeError('Vision analysis failed')
 
         output_text = response['output']['message']['content'][0]['text']
         usage = response.get('usage', {})

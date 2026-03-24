@@ -1424,7 +1424,11 @@ def generate_tarot(
             "locked_until": session["tarot_lock_until"]
         }
 
-    tarot = {"spread": "3-card", "cards": draw_tarot()}
+    flow_type = _flow_type(session.get("inputs") or {})
+    tarot = {
+        "spread": "daily-card" if flow_type == "tarot_solo" else "3-card",
+        "cards": draw_tarot(1 if flow_type == "tarot_solo" else 3),
+    }
     lock_until = now + timedelta(hours=24)
 
     db_update_session(
@@ -2617,12 +2621,21 @@ def generate_feng_shui_analysis(
     )
 
     if USE_PERSONA_ORCHESTRATION:
-        orchestrator = get_generation_orchestrator()
-        orchestration_result = orchestrator.build_feng_shui_analysis_result(
-            analysis=analysis,
-            user=user,
-            vision_result=vision_result,
-        )
+        try:
+            orchestrator = get_generation_orchestrator()
+            orchestration_result = orchestrator.build_feng_shui_analysis_result(
+                analysis=analysis,
+                user=user,
+                vision_result=vision_result,
+            )
+        except Exception as exc:
+            message = str(exc).lower()
+            if 'throttl' in message or 'rate limit' in message or 'too many requests' in message:
+                raise HTTPException(
+                    503,
+                    'Analysis capacity is temporarily tight. Please try again in a moment.'
+                )
+            raise
         analysis_payload = orchestration_result.payload
         analysis_payload["metadata"].update(
             {
