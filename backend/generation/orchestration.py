@@ -213,6 +213,8 @@ class MysticGenerationOrchestrator:
         )
         if flow_type == "daily_horoscope":
             continuity_context = filter_daily_continuity(continuity_context)
+        elif flow_type == "tarot_solo":
+            continuity_context = filter_tarot_continuity(continuity_context)
         persona_id = choose_persona(context, continuity_context)
         normalized, metadata, result = self._invoke_normalized_generation(
             persona_id=persona_id,
