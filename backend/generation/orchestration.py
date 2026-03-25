@@ -211,6 +211,8 @@ class MysticGenerationOrchestrator:
             current_flow_type=context.flow_type,
             current_object_type=context.object_type,
         )
+        if flow_type == "daily_horoscope":
+            continuity_context = filter_daily_continuity(continuity_context)
         persona_id = choose_persona(context, continuity_context)
         normalized, metadata, result = self._invoke_normalized_generation(
             persona_id=persona_id,
@@ -231,7 +233,7 @@ class MysticGenerationOrchestrator:
         )
         metadata.continuity_source_session_id = context.session_id
         payload = (
-            self._build_daily_horoscope_reading_payload(normalized=normalized, metadata=metadata)
+            build_daily_horoscope_reading_payload(normalized=normalized, metadata=metadata)
             if flow_type == "daily_horoscope"
             else build_reading_payload(normalized=normalized, metadata=metadata)
         )
