@@ -237,6 +237,10 @@ class MysticGenerationOrchestrator:
         payload = (
             build_daily_horoscope_reading_payload(normalized=normalized, metadata=metadata)
             if flow_type == "daily_horoscope"
+            else build_tarot_reading_payload(normalized=normalized, metadata=metadata)
+            if flow_type == "tarot_solo"
+            else build_sun_moon_reading_payload(normalized=normalized, metadata=metadata)
+            if flow_type == "sun_moon_solo"
             else build_reading_payload(normalized=normalized, metadata=metadata)
         )
         payload["metadata"].update(
