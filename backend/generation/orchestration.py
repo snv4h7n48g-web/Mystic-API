@@ -7,6 +7,14 @@ from .formatting.preview_formatter import build_preview_payload
 from .formatting.reading_formatter import build_reading_payload
 from .parser import parse_normalized_output
 from .personas import get_persona
+from .products.daily_horoscope.continuity import filter_daily_continuity
+from .products.daily_horoscope.reading import build_daily_horoscope_reading_payload
+from .products.lunar.continuity import filter_lunar_continuity
+from .products.lunar.reading import build_lunar_reading_payload
+from .products.sun_moon.continuity import filter_sun_moon_continuity
+from .products.sun_moon.reading import build_sun_moon_reading_payload
+from .products.tarot.continuity import filter_tarot_continuity
+from .products.tarot.reading import build_tarot_reading_payload
 from .profiles import get_llm_profile
 from .prompts.composer import compose_generation_prompt
 from .routing.persona_router import choose_persona
