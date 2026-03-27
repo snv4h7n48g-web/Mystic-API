@@ -18,6 +18,7 @@ def compose_generation_prompt(
     continuity_context: Optional[dict[str, Any]],
     domain_context: dict[str, Any],
     contract_instruction: Optional[str] = None,
+    retry_instruction: Optional[str] = None,
 ) -> dict[str, Any]:
     persona_prompt = PERSONA_PROMPTS[persona_id]
     flow_prompt = FLOW_PROMPTS[flow_id]

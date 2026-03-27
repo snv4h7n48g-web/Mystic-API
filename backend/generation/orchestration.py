@@ -25,7 +25,14 @@ from .validators import ValidationResult, validate_product_payload
 
 
 class MysticGenerationOrchestrator:
-    """Phase-2 product-aware orchestration with bounded validation retries."""
+    """Phase-3 product-aware orchestration with bounded validation retries."""
+
+    def _quality_gate_policy(self, *, context: GenerationContext, product_key: str | None) -> dict:
+        return {
+            "max_attempts": 2 if product_key else 1,
+            "attach_validation_metadata": context.surface == "full",
+            "hard_fail_on_exhausted_validation": False,
+        }
 
     def _invoke_normalized_generation(
         self,
@@ -86,7 +93,8 @@ class MysticGenerationOrchestrator:
 
     def _attach_contract_metadata(self, *, context: GenerationContext, payload: dict, validation: ValidationResult | None = None, attempts: int = 1) -> None:
         contract = get_product_contract(get_product_route_for_context(context).product_key)
-        if not contract:
+        policy = self._quality_gate_policy(context=context, product_key=(contract.product_key if contract else None))
+        if not contract or not policy["attach_validation_metadata"]:
             return
         if validation is None:
             validation = validate_product_payload(contract.product_key, payload)
@@ -447,4 +455,3 @@ def get_generation_orchestrator() -> MysticGenerationOrchestrator:
     if _generation_orchestrator is None:
         _generation_orchestrator = MysticGenerationOrchestrator()
     return _generation_orchestrator
-ation_orchestrator

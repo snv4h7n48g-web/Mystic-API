@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .products.compatibility import contracts as compatibility_contracts
 from .products.daily_horoscope import contracts as daily_contracts
+from .products.feng_shui import contracts as feng_shui_contracts
 from .products.lunar import contracts as lunar_contracts
+from .products.palm import contracts as palm_contracts
 from .products.tarot import contracts as tarot_contracts
 
 
