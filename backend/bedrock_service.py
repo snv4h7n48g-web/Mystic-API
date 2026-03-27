@@ -41,7 +41,7 @@ class BedrockService:
         
         # Token limits
         self.preview_max_tokens = 200
-        self.full_max_tokens = 1200
+        self.full_max_tokens = 1800
         
         # Cost tracking (approximate USD per 1000 tokens)
         self.costs = {
