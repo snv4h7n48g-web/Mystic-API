@@ -17,6 +17,7 @@ def compose_generation_prompt(
     flow_id: str,
     continuity_context: Optional[dict[str, Any]],
     domain_context: dict[str, Any],
+    contract_instruction: Optional[str] = None,
 ) -> dict[str, Any]:
     persona_prompt = PERSONA_PROMPTS[persona_id]
     flow_prompt = FLOW_PROMPTS[flow_id]
@@ -26,10 +27,14 @@ def compose_generation_prompt(
     messages = [
         f"PERSONA:\n{persona_prompt}",
         f"FLOW:\n{flow_prompt}",
+    ]
+    if contract_instruction:
+        messages.append(f"PRODUCT_CONTRACT:\n{contract_instruction}")
+    messages.extend([
         f"CONTINUITY_CONTEXT:\n{continuity_blob}",
         f"DOMAIN_CONTEXT:\n{domain_blob}",
         OUTPUT_SCHEMA_INSTRUCTION,
-    ]
+    ])
 
     return {
         "system_prompt": BASE_SYSTEM_PROMPT,
