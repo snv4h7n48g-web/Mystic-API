@@ -6,11 +6,12 @@ from .mapper import map_lunar_preview
 def build_lunar_preview_payload(*, normalized, metadata, unlock_price, product_id, entitlements, astrology_facts):
     mapped = map_lunar_preview(normalized)
     return {
-        'teaser_text': mapped['headline'] or mapped['forecast_teaser'] or mapped['guidance_teaser'],
+        'teaser_text': mapped['headline'] or mapped['year_symbolism_teaser'] or mapped['movement_guidance_teaser'],
         'headline': mapped['headline'],
-        'forecast_teaser': mapped['forecast_teaser'],
-        'synthesis_teaser': mapped['synthesis_teaser'],
-        'guidance_teaser': mapped['guidance_teaser'],
+        'cycle_theme_teaser': mapped['cycle_theme_teaser'],
+        'year_symbolism_teaser': mapped['year_symbolism_teaser'],
+        'welcome_release_teaser': mapped['welcome_release_teaser'],
+        'movement_guidance_teaser': mapped['movement_guidance_teaser'],
         'unlock_price': unlock_price,
         'product_id': product_id,
         'entitlements': entitlements,

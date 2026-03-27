@@ -6,11 +6,11 @@ from .mapper import map_lunar_reading
 def build_lunar_reading_payload(*, normalized, metadata):
     mapped = map_lunar_reading(normalized)
     sections = [
-        {'id': 'opening_invocation', 'title': 'OPENING', 'text': mapped['opening_invocation']},
-        {'id': 'lunar_forecast', 'title': 'SEASONAL FORECAST', 'text': mapped['lunar_forecast']},
-        {'id': 'integrated_synthesis', 'title': 'SYNTHESIS', 'text': mapped['integrated_synthesis']},
-        {'id': 'reflective_guidance', 'title': 'GUIDANCE', 'text': mapped['reflective_guidance']},
-        {'id': 'closing_prompt', 'title': 'CLOSING', 'text': mapped['closing_prompt']},
+        {'id': 'opening_invocation', 'title': 'CYCLE THEME', 'text': mapped['opening_invocation']},
+        {'id': 'lunar_forecast', 'title': 'YEAR SYMBOLISM', 'text': mapped['lunar_forecast']},
+        {'id': 'integrated_synthesis', 'title': 'WELCOME AND RELEASE', 'text': mapped['integrated_synthesis']},
+        {'id': 'reflective_guidance', 'title': 'HOW TO MOVE WELL THROUGH THE YEAR', 'text': mapped['reflective_guidance']},
+        {'id': 'closing_prompt', 'title': 'YEAR-AHEAD CLOSING', 'text': mapped['closing_prompt']},
     ]
     sections = [section for section in sections if section['text'] and section['text'].strip()]
     return {
