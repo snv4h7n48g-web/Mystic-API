@@ -213,6 +213,10 @@ class MysticGenerationOrchestrator:
         )
         if flow_type == "daily_horoscope":
             continuity_context = filter_daily_continuity(continuity_context)
+        elif flow_type == "lunar_new_year_solo":
+            continuity_context = filter_lunar_continuity(continuity_context)
+        elif flow_type == "sun_moon_solo":
+            continuity_context = filter_sun_moon_continuity(continuity_context)
         elif flow_type == "tarot_solo":
             continuity_context = filter_tarot_continuity(continuity_context)
         persona_id = choose_persona(context, continuity_context)
