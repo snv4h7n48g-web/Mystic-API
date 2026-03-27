@@ -30,6 +30,8 @@ def compose_generation_prompt(
     ]
     if contract_instruction:
         messages.append(f"PRODUCT_CONTRACT:\n{contract_instruction}")
+    if retry_instruction:
+        messages.append(f"RETRY_CORRECTION:\n{retry_instruction}")
     messages.extend([
         f"CONTINUITY_CONTEXT:\n{continuity_blob}",
         f"DOMAIN_CONTEXT:\n{domain_blob}",

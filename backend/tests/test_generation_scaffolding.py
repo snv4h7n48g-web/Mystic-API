@@ -9,9 +9,10 @@ from generation.types import GenerationContext, GenerationMetadata
 def test_compose_generation_prompt_includes_persona_flow_and_schema() -> None:
     prompt = compose_generation_prompt(
         persona_id="ancient_tarot_reader",
-        flow_id="session_preview",
+        flow_id="tarot_preview",
         continuity_context={"latest": "something real"},
         domain_context={"question": "What is shifting?"},
+        retry_instruction="Be more card-specific.",
     )
 
     assert "system_prompt" in prompt

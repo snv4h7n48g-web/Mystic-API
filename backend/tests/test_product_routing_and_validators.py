@@ -38,6 +38,7 @@ def test_tarot_validator_requires_card_specific_structure() -> None:
     invalid_payload = {"sections": [{"id": "tarot_narrative", "text": "Trust yourself and stay positive."}]}
     invalid = validate_product_payload("tarot", invalid_payload)
     assert invalid.valid is False
+    assert invalid.retry_hint is not None
     assert "tarot_missing_card_specific_language" in invalid.issues
 
     valid_payload = {
@@ -50,3 +51,25 @@ def test_tarot_validator_requires_card_specific_structure() -> None:
     }
     valid = validate_product_payload("tarot", valid_payload)
     assert valid.valid is True
+
+
+def test_extended_validators_cover_compatibility_palm_and_feng_shui() -> None:
+    compatibility = validate_product_payload(
+        "compatibility",
+        {"sections": [{"id": "current_pattern", "text": "This is your solo path."}]},
+    )
+    palm = validate_product_payload(
+        "palm",
+        {"sections": [{"id": "current_pattern", "text": "A spiritual message is around you."}]},
+    )
+    feng_shui = validate_product_payload(
+        "feng_shui",
+        {"sections": [{"id": "current_pattern", "text": "Trust your soul and stay open."}]},
+    )
+
+    assert compatibility.valid is False
+    assert "compatibility_missing_relationship_framing" in compatibility.issues
+    assert palm.valid is False
+    assert "palm_missing_feature_led_language" in palm.issues
+    assert feng_shui.valid is False
+    assert "feng_shui_missing_space_analysis_language" in feng_shui.issues

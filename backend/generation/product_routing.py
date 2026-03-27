@@ -128,6 +128,7 @@ FLOW_TO_PRODUCT_KEY = {
     "daily_horoscope": "daily",
     "lunar_new_year_solo": "lunar",
     "tarot_solo": "tarot",
+    "palm_solo": "palm",
     "compatibility": "compatibility",
     "feng_shui": "feng_shui",
     "combined": "full_reading",

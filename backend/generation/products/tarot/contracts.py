@@ -17,4 +17,5 @@ CONTRACT_INSTRUCTION = """TAROT CONTRACT:
 - Name card symbolism, card positions, or spread dynamics when available.
 - The reading should feel interpreted, not generic: symbol -> meaning -> synthesis -> guidance.
 - The tarot narrative section should clearly carry the card-specific interpretation burden.
+- Use recognisably tarot language and do not drift into generic astrology, full-session, or self-help prose.
 """

@@ -34,6 +34,24 @@ CONTRACTS: dict[str, ProductContract] = {
         expected_section_ids=tarot_contracts.EXPECTED_SECTION_IDS,
         contract_instruction=tarot_contracts.CONTRACT_INSTRUCTION,
     ),
+    "compatibility": ProductContract(
+        product_key=compatibility_contracts.PRODUCT_KEY,
+        prompt_ids=compatibility_contracts.PROMPT_IDS,
+        expected_section_ids=compatibility_contracts.EXPECTED_SECTION_IDS,
+        contract_instruction=compatibility_contracts.CONTRACT_INSTRUCTION,
+    ),
+    "palm": ProductContract(
+        product_key=palm_contracts.PRODUCT_KEY,
+        prompt_ids=palm_contracts.PROMPT_IDS,
+        expected_section_ids=palm_contracts.EXPECTED_SECTION_IDS,
+        contract_instruction=palm_contracts.CONTRACT_INSTRUCTION,
+    ),
+    "feng_shui": ProductContract(
+        product_key=feng_shui_contracts.PRODUCT_KEY,
+        prompt_ids=feng_shui_contracts.PROMPT_IDS,
+        expected_section_ids=feng_shui_contracts.EXPECTED_SECTION_IDS,
+        contract_instruction=feng_shui_contracts.CONTRACT_INSTRUCTION,
+    ),
 }
 
 

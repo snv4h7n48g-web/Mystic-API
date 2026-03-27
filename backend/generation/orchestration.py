@@ -21,11 +21,11 @@ from .profiles import LlmProfile, get_llm_profile
 from .prompts.composer import compose_generation_prompt
 from .routing.persona_router import choose_persona
 from .types import GenerationContext, GenerationMetadata, NormalizedMysticOutput, OrchestrationResult
-from .validators import validate_product_payload
+from .validators import ValidationResult, validate_product_payload
 
 
 class MysticGenerationOrchestrator:
-    """Phase-1 scaffolding for persona-based Bedrock orchestration."""
+    """Phase-2 product-aware orchestration with bounded validation retries."""
 
     def _invoke_normalized_generation(
         self,
@@ -36,6 +36,7 @@ class MysticGenerationOrchestrator:
         continuity_context: dict | None,
         domain_context: dict,
         contract_instruction: str | None = None,
+        retry_instruction: str | None = None,
     ) -> tuple[dict, GenerationMetadata, OrchestrationResult]:
         persona = get_persona(persona_id)
         route = get_product_route_for_context(context)
@@ -54,6 +55,7 @@ class MysticGenerationOrchestrator:
             continuity_context=continuity_context,
             domain_context=domain_context,
             contract_instruction=contract_instruction,
+            retry_instruction=retry_instruction,
         )
         bedrock = get_bedrock_service()
         llm_result = bedrock.invoke_text(
@@ -82,17 +84,147 @@ class MysticGenerationOrchestrator:
         )
         return normalized, metadata, result
 
-    def _attach_contract_metadata(self, *, context: GenerationContext, payload: dict) -> None:
+    def _attach_contract_metadata(self, *, context: GenerationContext, payload: dict, validation: ValidationResult | None = None, attempts: int = 1) -> None:
         contract = get_product_contract(get_product_route_for_context(context).product_key)
         if not contract:
             return
-        validation = validate_product_payload(contract.product_key, payload)
-        payload.setdefault("metadata", {})["validation"] = {
+        if validation is None:
+            validation = validate_product_payload(contract.product_key, payload)
+        metadata = payload.setdefault("metadata", payload.setdefault("meta", {}))
+        metadata["validation"] = {
             "product_key": validation.product_key,
             "valid": validation.valid,
+            "passed": validation.passed,
             "issues": validation.issues,
+            "retry_hint": validation.retry_hint,
+            "attempts": attempts,
         }
-        payload["metadata"]["expected_section_ids"] = contract.expected_section_ids
+        metadata["expected_section_ids"] = contract.expected_section_ids
+
+    def _build_payload_for_context(self, *, context: GenerationContext, normalized: NormalizedMysticOutput, metadata: GenerationMetadata, unlock_price: dict | None = None, product_id: str | None = None, entitlements: dict | None = None, astrology_facts: dict | None = None, tarot_payload: dict | None = None, include_palm: bool = False, deep_access: bool = False, content_contract: dict | None = None, person1: dict | None = None, person2: dict | None = None, chart1: dict | None = None, chart2: dict | None = None, zodiac1: dict | None = None, zodiac2: dict | None = None, synastry: dict | None = None, zodiac_harmony: dict | None = None, analysis: dict | None = None, price_amount: float = 0.0) -> dict:
+        if context.object_type == "session" and context.surface == "preview":
+            return build_preview_payload(
+                normalized=normalized,
+                metadata=metadata,
+                flow_type=context.flow_type,
+                unlock_price=unlock_price or {},
+                product_id=product_id or "",
+                entitlements=entitlements or {},
+                astrology_facts=astrology_facts or {},
+                tarot_payload=tarot_payload or {},
+            )
+        if context.object_type == "session" and context.surface == "full":
+            payload = (
+                build_daily_horoscope_reading_payload(normalized=normalized, metadata=metadata)
+                if context.flow_type == "daily_horoscope"
+                else build_lunar_reading_payload(normalized=normalized, metadata=metadata)
+                if context.flow_type == "lunar_new_year_solo"
+                else build_tarot_reading_payload(normalized=normalized, metadata=metadata)
+                if context.flow_type == "tarot_solo"
+                else build_sun_moon_reading_payload(normalized=normalized, metadata=metadata)
+                if context.flow_type == "sun_moon_solo"
+                else build_reading_payload(normalized=normalized, metadata=metadata)
+            )
+            payload["metadata"].update({
+                "includes_palm": include_palm,
+                "deep_access": deep_access,
+                "flow_type": context.flow_type,
+                "content_contract": content_contract or {},
+            })
+            return payload
+        if context.object_type == "compatibility" and context.surface == "preview":
+            return {
+                "teaser_text": " ".join(part.strip() for part in [normalized.opening_hook, normalized.current_pattern, normalized.premium_teaser] if part and part.strip()),
+                "person1": {"profile": person1, "chart": chart1, "zodiac": zodiac1},
+                "person2": {"profile": person2, "chart": chart2, "zodiac": zodiac2},
+                "synastry": synastry,
+                "unlock_price": {"currency": "USD", "amount": 0.0 if (entitlements or {}).get("included") else 3.99},
+                "product_id": "compatibility",
+                "entitlements": entitlements or {},
+                "meta": {
+                    "persona_id": metadata.persona_id,
+                    "llm_profile_id": metadata.llm_profile_id,
+                    "prompt_version": metadata.prompt_version,
+                    "theme_tags": metadata.theme_tags,
+                    "headline": metadata.headline,
+                },
+                "sections": [
+                    {"id": "opening_hook", "text": normalized.opening_hook},
+                    {"id": "current_pattern", "text": normalized.current_pattern},
+                    {"id": "emotional_truth", "text": normalized.emotional_truth},
+                    {"id": "practical_guidance", "text": normalized.practical_guidance},
+                    {"id": "next_return_invitation", "text": normalized.next_return_invitation},
+                ],
+            }
+        if context.object_type == "compatibility" and context.surface == "full":
+            payload = build_reading_payload(normalized=normalized, metadata=metadata)
+            payload["metadata"].update({"flow_type": "compatibility"})
+            return payload
+        if context.object_type == "feng_shui" and context.surface == "preview":
+            return {
+                "teaser_text": " ".join(part.strip() for part in [normalized.opening_hook, normalized.current_pattern, normalized.premium_teaser] if part and part.strip()),
+                "analysis_type": (analysis or {}).get("analysis_type") or "single_room",
+                "unlock_price": {"currency": "USD", "amount": 0.0 if (entitlements or {}).get("included") else 0.0},
+                "product_id": product_id or "",
+                "entitlements": entitlements or {},
+                "meta": {
+                    "persona_id": metadata.persona_id,
+                    "llm_profile_id": metadata.llm_profile_id,
+                    "prompt_version": metadata.prompt_version,
+                    "theme_tags": metadata.theme_tags,
+                    "headline": metadata.headline,
+                },
+                "sections": [
+                    {"id": "opening_hook", "text": normalized.opening_hook},
+                    {"id": "current_pattern", "text": normalized.current_pattern},
+                    {"id": "emotional_truth", "text": normalized.emotional_truth},
+                    {"id": "practical_guidance", "text": normalized.practical_guidance},
+                    {"id": "next_return_invitation", "text": normalized.next_return_invitation},
+                ],
+            }
+        if context.object_type == "feng_shui" and context.surface == "full":
+            payload = build_reading_payload(normalized=normalized, metadata=metadata)
+            payload["metadata"].update({"flow_type": "feng_shui"})
+            return payload
+        return build_reading_payload(normalized=normalized, metadata=metadata)
+
+    def _generate_with_quality_gate(self, *, context: GenerationContext, persona_id: str, flow_id: str, continuity_context: dict | None, domain_context: dict, contract_instruction: str | None = None, payload_builder_kwargs: dict | None = None) -> OrchestrationResult:
+        payload_builder_kwargs = payload_builder_kwargs or {}
+        contract = get_product_contract(get_product_route_for_context(context).product_key)
+        attempts: list[tuple[NormalizedMysticOutput, GenerationMetadata, OrchestrationResult, dict, ValidationResult]] = []
+        retry_instruction: str | None = None
+
+        for _ in range(2):
+            normalized, metadata, result = self._invoke_normalized_generation(
+                context=context,
+                persona_id=persona_id,
+                flow_id=flow_id,
+                continuity_context=continuity_context,
+                domain_context=domain_context,
+                contract_instruction=contract_instruction,
+                retry_instruction=retry_instruction,
+            )
+            payload = self._build_payload_for_context(
+                context=context,
+                normalized=normalized,
+                metadata=metadata,
+                **payload_builder_kwargs,
+            )
+            validation = validate_product_payload(contract.product_key, payload) if contract else ValidationResult(product_key="unknown", passed=True)
+            attempts.append((normalized, metadata, result, payload, validation))
+            if validation.passed or not contract or not validation.retry_hint:
+                break
+            retry_instruction = validation.retry_hint
+
+        _, _, final_result, final_payload, final_validation = attempts[-1]
+        final_attempt_count = len(attempts)
+        self._attach_contract_metadata(context=context, payload=final_payload, validation=final_validation, attempts=final_attempt_count)
+        final_result.payload = final_payload
+        if final_attempt_count > 1:
+            final_result.input_tokens = sum(attempt[2].input_tokens for attempt in attempts)
+            final_result.output_tokens = sum(attempt[2].output_tokens for attempt in attempts)
+            final_result.cost_usd = sum(attempt[2].cost_usd for attempt in attempts)
+        return final_result
 
     def _build_session_context(self, *, session: dict, user: dict | None, surface: str, unlocked: bool) -> GenerationContext:
         inputs = session.get("inputs") or {}
@@ -143,7 +275,7 @@ class MysticGenerationOrchestrator:
         persona_id = choose_persona(context, continuity_context)
         contract = get_product_contract(get_product_route_for_context(context).product_key)
         flow_id = contract.prompt_ids["preview"] if contract else ("daily_horoscope_preview" if context.flow_type == "daily_horoscope" else "lunar_new_year_preview" if context.flow_type == "lunar_new_year_solo" else "session_preview")
-        normalized, metadata, result = self._invoke_normalized_generation(
+        return self._generate_with_quality_gate(
             context=context,
             persona_id=persona_id,
             flow_id=flow_id,
@@ -155,20 +287,14 @@ class MysticGenerationOrchestrator:
                 "tarot": tarot_payload,
             },
             contract_instruction=(contract.contract_instruction if contract else None),
+            payload_builder_kwargs={
+                "unlock_price": unlock_price,
+                "product_id": product_id,
+                "entitlements": entitlements,
+                "astrology_facts": astrology_facts,
+                "tarot_payload": tarot_payload,
+            },
         )
-        payload = build_preview_payload(
-            normalized=normalized,
-            metadata=metadata,
-            flow_type=context.flow_type,
-            unlock_price=unlock_price,
-            product_id=product_id,
-            entitlements=entitlements,
-            astrology_facts=astrology_facts,
-            tarot_payload=tarot_payload,
-        )
-        self._attach_contract_metadata(context=context, payload=payload)
-        result.payload = payload
-        return result
 
     def build_session_reading_result(self, *, session: dict, user: dict | None, astrology_facts: dict, tarot_payload: dict, palm_features: list[dict] | None, include_palm: bool, deep_access: bool, content_contract: dict) -> OrchestrationResult:
         context = self._build_session_context(session=session, user=user, surface="full", unlocked=True)
@@ -189,7 +315,7 @@ class MysticGenerationOrchestrator:
         persona_id = choose_persona(context, continuity_context)
         contract = get_product_contract(get_product_route_for_context(context).product_key)
         flow_id = contract.prompt_ids["reading"] if contract else ("daily_horoscope_reading" if context.flow_type == "daily_horoscope" else "lunar_new_year_reading" if context.flow_type == "lunar_new_year_solo" else "session_reading")
-        normalized, metadata, result = self._invoke_normalized_generation(
+        result = self._generate_with_quality_gate(
             context=context,
             persona_id=persona_id,
             flow_id=flow_id,
@@ -206,37 +332,24 @@ class MysticGenerationOrchestrator:
                 "content_contract": content_contract,
             },
             contract_instruction=(contract.contract_instruction if contract else None),
+            payload_builder_kwargs={
+                "include_palm": include_palm,
+                "deep_access": deep_access,
+                "content_contract": content_contract,
+            },
         )
-        metadata.continuity_source_session_id = context.session_id
-        payload = (
-            build_daily_horoscope_reading_payload(normalized=normalized, metadata=metadata)
-            if context.flow_type == "daily_horoscope"
-            else build_lunar_reading_payload(normalized=normalized, metadata=metadata)
-            if context.flow_type == "lunar_new_year_solo"
-            else build_tarot_reading_payload(normalized=normalized, metadata=metadata)
-            if context.flow_type == "tarot_solo"
-            else build_sun_moon_reading_payload(normalized=normalized, metadata=metadata)
-            if context.flow_type == "sun_moon_solo"
-            else build_reading_payload(normalized=normalized, metadata=metadata)
-        )
-        payload["metadata"].update({
-            "includes_palm": include_palm,
-            "deep_access": deep_access,
-            "flow_type": context.flow_type,
-            "content_contract": content_contract,
-        })
-        self._attach_contract_metadata(context=context, payload=payload)
-        result.payload = payload
+        result.metadata.continuity_source_session_id = context.session_id
         return result
 
     def build_compatibility_preview_result(self, *, compat: dict, user: dict | None, person1: dict, person2: dict, chart1: dict, chart2: dict, zodiac1: dict, zodiac2: dict, synastry: dict, zodiac_harmony: dict, entitlements: dict) -> OrchestrationResult:
         context = self._build_compatibility_context(compat=compat, user=user, surface="preview")
         continuity_context = build_continuity_context(user_id=context.user_id, session_id=context.session_id)
         persona_id = choose_persona(context, continuity_context)
-        normalized, metadata, result = self._invoke_normalized_generation(
+        contract = get_product_contract(get_product_route_for_context(context).product_key)
+        return self._generate_with_quality_gate(
             context=context,
             persona_id=persona_id,
-            flow_id="compatibility_preview",
+            flow_id=(contract.prompt_ids["preview"] if contract else "compatibility_preview"),
             continuity_context=continuity_context,
             domain_context={
                 "person1": {"profile": person1, "chart": chart1, "zodiac": zodiac1},
@@ -244,34 +357,29 @@ class MysticGenerationOrchestrator:
                 "synastry": synastry,
                 "zodiac_compatibility": zodiac_harmony,
             },
-        )
-        payload = {
-            "teaser_text": " ".join(part.strip() for part in [normalized.opening_hook, normalized.current_pattern, normalized.premium_teaser] if part and part.strip()),
-            "person1": {"profile": person1, "chart": chart1, "zodiac": zodiac1},
-            "person2": {"profile": person2, "chart": chart2, "zodiac": zodiac2},
-            "synastry": synastry,
-            "unlock_price": {"currency": "USD", "amount": 0.0 if entitlements.get("included") else 3.99},
-            "product_id": "compatibility",
-            "entitlements": entitlements,
-            "meta": {
-                "persona_id": metadata.persona_id,
-                "llm_profile_id": metadata.llm_profile_id,
-                "prompt_version": metadata.prompt_version,
-                "theme_tags": metadata.theme_tags,
-                "headline": metadata.headline,
+            contract_instruction=(contract.contract_instruction if contract else None),
+            payload_builder_kwargs={
+                "person1": person1,
+                "person2": person2,
+                "chart1": chart1,
+                "chart2": chart2,
+                "zodiac1": zodiac1,
+                "zodiac2": zodiac2,
+                "synastry": synastry,
+                "zodiac_harmony": zodiac_harmony,
+                "entitlements": entitlements,
             },
-        }
-        result.payload = payload
-        return result
+        )
 
     def build_compatibility_reading_result(self, *, compat: dict, user: dict | None, person1: dict, person2: dict, chart1: dict, chart2: dict, synastry: dict, zodiac_harmony: dict) -> OrchestrationResult:
         context = self._build_compatibility_context(compat=compat, user=user, surface="full")
         continuity_context = build_continuity_context(user_id=context.user_id, session_id=context.session_id)
         persona_id = choose_persona(context, continuity_context)
-        normalized, metadata, result = self._invoke_normalized_generation(
+        contract = get_product_contract(get_product_route_for_context(context).product_key)
+        result = self._generate_with_quality_gate(
             context=context,
             persona_id=persona_id,
-            flow_id="compatibility_reading",
+            flow_id=(contract.prompt_ids["reading"] if contract else "compatibility_reading"),
             continuity_context=continuity_context,
             domain_context={
                 "person1": {"profile": person1, "chart": chart1},
@@ -279,21 +387,20 @@ class MysticGenerationOrchestrator:
                 "synastry": synastry,
                 "zodiac_compatibility": zodiac_harmony,
             },
+            contract_instruction=(contract.contract_instruction if contract else None),
         )
-        metadata.continuity_source_session_id = context.session_id
-        payload = build_reading_payload(normalized=normalized, metadata=metadata)
-        payload["metadata"].update({"flow_type": "compatibility"})
-        result.payload = payload
+        result.metadata.continuity_source_session_id = context.session_id
         return result
 
     def build_feng_shui_preview_result(self, *, analysis: dict, user: dict | None, entitlements: dict, product_id: str, price_amount: float) -> OrchestrationResult:
         context = self._build_feng_shui_context(analysis=analysis, user=user, surface="preview")
         continuity_context = build_continuity_context(user_id=context.user_id, session_id=context.session_id)
         persona_id = choose_persona(context, continuity_context)
-        normalized, metadata, result = self._invoke_normalized_generation(
+        contract = get_product_contract(get_product_route_for_context(context).product_key)
+        return self._generate_with_quality_gate(
             context=context,
             persona_id=persona_id,
-            flow_id="feng_shui_preview",
+            flow_id=(contract.prompt_ids["preview"] if contract else "feng_shui_preview"),
             continuity_context=continuity_context,
             domain_context={
                 "analysis_type": analysis.get("analysis_type"),
@@ -301,32 +408,23 @@ class MysticGenerationOrchestrator:
                 "user_goals": analysis.get("user_goals"),
                 "compass_direction": analysis.get("compass_direction"),
             },
-        )
-        payload = {
-            "teaser_text": " ".join(part.strip() for part in [normalized.opening_hook, normalized.current_pattern, normalized.premium_teaser] if part and part.strip()),
-            "analysis_type": analysis.get("analysis_type") or "single_room",
-            "unlock_price": {"currency": "USD", "amount": 0.0 if entitlements.get("included") else price_amount},
-            "product_id": product_id,
-            "entitlements": entitlements,
-            "meta": {
-                "persona_id": metadata.persona_id,
-                "llm_profile_id": metadata.llm_profile_id,
-                "prompt_version": metadata.prompt_version,
-                "theme_tags": metadata.theme_tags,
-                "headline": metadata.headline,
+            contract_instruction=(contract.contract_instruction if contract else None),
+            payload_builder_kwargs={
+                "analysis": analysis,
+                "entitlements": entitlements,
+                "product_id": product_id,
             },
-        }
-        result.payload = payload
-        return result
+        )
 
     def build_feng_shui_analysis_result(self, *, analysis: dict, user: dict | None, vision_result: dict) -> OrchestrationResult:
         context = self._build_feng_shui_context(analysis=analysis, user=user, surface="full")
         continuity_context = build_continuity_context(user_id=context.user_id, session_id=context.session_id)
         persona_id = choose_persona(context, continuity_context)
-        normalized, metadata, result = self._invoke_normalized_generation(
+        contract = get_product_contract(get_product_route_for_context(context).product_key)
+        result = self._generate_with_quality_gate(
             context=context,
             persona_id=persona_id,
-            flow_id="feng_shui_analysis",
+            flow_id=(contract.prompt_ids["reading"] if contract else "feng_shui_analysis"),
             continuity_context=continuity_context,
             domain_context={
                 "analysis_type": analysis.get("analysis_type"),
@@ -335,11 +433,9 @@ class MysticGenerationOrchestrator:
                 "compass_direction": analysis.get("compass_direction"),
                 "vision_analysis": vision_result,
             },
+            contract_instruction=(contract.contract_instruction if contract else None),
         )
-        metadata.continuity_source_session_id = context.session_id
-        payload = build_reading_payload(normalized=normalized, metadata=metadata)
-        payload["metadata"].update({"flow_type": "feng_shui"})
-        result.payload = payload
+        result.metadata.continuity_source_session_id = context.session_id
         return result
 
 
@@ -351,3 +447,4 @@ def get_generation_orchestrator() -> MysticGenerationOrchestrator:
     if _generation_orchestrator is None:
         _generation_orchestrator = MysticGenerationOrchestrator()
     return _generation_orchestrator
+ation_orchestrator

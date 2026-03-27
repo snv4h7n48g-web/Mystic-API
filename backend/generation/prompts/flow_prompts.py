@@ -1,6 +1,8 @@
 FLOW_PROMPTS: dict[str, str] = {
     "session_preview": "Generate a short preview with intrigue, specificity, and a soft deeper-layer teaser.",
     "session_reading": "Generate a full premium reading with emotional pattern recognition, practical guidance, and a return invitation.",
+    "tarot_preview": "Generate a tarot preview that is clearly card-led, not a generic astrology teaser. Refer to the drawn card or cards when available, name symbolic meaning, and hint at how the spread or position changes the interpretation.",
+    "tarot_reading": "Generate a full tarot reading that is unmistakably tarot-specific. Interpret the actual card or cards, explain their symbolism, reflect the spread or position logic when available, and synthesise the cards into a coherent reading with grounded guidance. Avoid drifting into generic astrology or full-reading prose.",
     "daily_horoscope_preview": "Generate a true daily horoscope preview. Keep it clearly about today and make it fast to scan. The implied structure should be: today's headline, today's energy, best move, watch out for, plus a soft deeper-layer teaser.",
     "daily_horoscope_reading": "Generate a true full daily horoscope, not a generic astrology essay. Focus on today only. The implied structure should cover: today's theme, today's energy, best move, watch out for, people energy, work/focus, timing, and closing guidance.",
     "lunar_new_year_preview": "Generate a true Lunar New Year preview, not a daily horoscope, seasonal wellness note, or generic astrology reading. Frame it as the new year-cycle the user is entering. Make the preview specific about the cycle theme, the symbolic character of the year, and one important opportunity or caution to carry into the year ahead.",
