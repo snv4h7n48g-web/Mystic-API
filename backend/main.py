@@ -1031,6 +1031,18 @@ def _flow_uses_tarot(flow_type: str) -> bool:
     return flow_type in {"combined", "tarot_solo"}
 
 
+def _expected_tarot_card_count(flow_type: str) -> int:
+    return 1 if flow_type == "tarot_solo" else 3
+
+
+def _tarot_matches_flow(session: Optional[Dict[str, Any]], flow_type: str) -> bool:
+    tarot = (session or {}).get("tarot") if isinstance(session, dict) else None
+    if not isinstance(tarot, dict):
+        return False
+    cards = tarot.get("cards") or []
+    return len(cards) == _expected_tarot_card_count(flow_type)
+
+
 def _build_astrology_profile_for_user(user: dict) -> Optional[Dict[str, Any]]:
     birth_date = user.get("birth_date")
     if not birth_date:
@@ -1428,16 +1440,21 @@ def generate_tarot(
 
     now = datetime.now(timezone.utc)
 
-    if session["tarot"] and session["tarot_lock_until"] and now < session["tarot_lock_until"]:
+    flow_type = _flow_type(session.get("inputs") or {})
+    if (
+        session["tarot"]
+        and session["tarot_lock_until"]
+        and now < session["tarot_lock_until"]
+        and _tarot_matches_flow(session, flow_type)
+    ):
         return {
             "tarot": session["tarot"],
             "locked_until": session["tarot_lock_until"]
         }
 
-    flow_type = _flow_type(session.get("inputs") or {})
     tarot = {
         "spread": "daily-card" if flow_type == "tarot_solo" else "3-card",
-        "cards": draw_tarot(1 if flow_type == "tarot_solo" else 3),
+        "cards": draw_tarot(_expected_tarot_card_count(flow_type)),
     }
     lock_until = now + timedelta(hours=24)
 
@@ -1500,8 +1517,10 @@ def generate_preview(
             db_update_session(session_id, status="preview_ready")
         return {"status": "preview_ready", "preview": preview_existing}
 
-    # Ensure tarot is drawn only for tarot-based flows
-    if _flow_uses_tarot(flow_type) and not session["tarot"]:
+    # Ensure tarot is drawn only for tarot-based flows and redraw if the stored
+    # spread no longer matches the active flow (for example, switching from
+    # tarot solo back into the full combined reading path).
+    if _flow_uses_tarot(flow_type) and not _tarot_matches_flow(session, flow_type):
         generate_tarot(session_id, user)
         session = db_get_session(session_id)
 
