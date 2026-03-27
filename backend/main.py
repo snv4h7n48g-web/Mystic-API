@@ -674,12 +674,22 @@ TAROT_DECK = [
 ]
 
 
-def draw_tarot():
-    cards = secrets.SystemRandom().sample(TAROT_DECK, 3)
+def draw_tarot(card_count: int = 3):
+    if card_count <= 0:
+        return []
+
+    positions = ["Past", "Present", "Guidance"]
+    if card_count == 1:
+        positions = ["Card"]
+    elif card_count > len(positions):
+        positions = [f"Card {idx + 1}" for idx in range(card_count)]
+    else:
+        positions = positions[:card_count]
+
+    cards = secrets.SystemRandom().sample(TAROT_DECK, card_count)
     return [
-        {"card": cards[0], "position": "Past"},
-        {"card": cards[1], "position": "Present"},
-        {"card": cards[2], "position": "Guidance"},
+        {"card": card, "position": positions[idx]}
+        for idx, card in enumerate(cards)
     ]
 
 
