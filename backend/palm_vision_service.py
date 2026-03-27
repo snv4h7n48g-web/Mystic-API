@@ -39,12 +39,12 @@ class PalmVisionService:
         # Vision-capable model (override via env for account availability / inference profile)
         self.model_id = os.getenv(
             "PALM_VISION_MODEL_ID",
-            "anthropic.claude-3-5-sonnet-20240620-v1:0"
+            "us.amazon.nova-pro-v1:0"
         )
         
         # Cost tracking (approximate USD per 1000 tokens)
-        self.cost_per_1k_input = 0.003
-        self.cost_per_1k_output = 0.015
+        self.cost_per_1k_input = 0.0008
+        self.cost_per_1k_output = 0.0032
     
     def analyze_palm(
         self,
