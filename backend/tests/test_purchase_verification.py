@@ -182,3 +182,123 @@ def test_inactive_subscription_is_rejected(monkeypatch) -> None:
         assert "not currently active" in str(exc)
     else:
         raise AssertionError("Expected ValueError")
+
+
+def test_production_rejects_dev_bypass_flag(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("ALLOW_DEV_PURCHASE_BYPASS", "true")
+
+    try:
+        PurchaseVerificationService()
+    except RuntimeError as exc:
+        assert "cannot be enabled" in str(exc)
+    else:
+        raise AssertionError("Expected RuntimeError")
+
+
+def test_subscription_cancelled_transaction_is_not_active(monkeypatch) -> None:
+    monkeypatch.setenv("APPLE_SHARED_SECRET", "shared-secret")
+    service = PurchaseVerificationService()
+    future_ms = int((datetime.now(timezone.utc) + timedelta(days=10)).timestamp() * 1000)
+
+    def fake_post(url, json, timeout):
+        return _FakeResponse(
+            {
+                "status": 0,
+                "latest_receipt_info": [
+                    {
+                        "product_id": "subscription_daily_999",
+                        "transaction_id": "txn_cancelled",
+                        "original_transaction_id": "orig_cancelled",
+                        "expires_date_ms": str(future_ms),
+                        "cancellation_date": "2026-03-01T00:00:00Z",
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr("purchase_verification.requests.post", fake_post)
+
+    try:
+        service.verify_purchase(
+            product_id="subscription_daily_999",
+            transaction_id="txn_cancelled",
+            receipt_data="signed-receipt",
+            is_subscription=True,
+        )
+    except ValueError as exc:
+        assert "not currently active" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_transaction_matching_prefers_active_candidate(monkeypatch) -> None:
+    monkeypatch.setenv("APPLE_SHARED_SECRET", "shared-secret")
+    service = PurchaseVerificationService()
+    future_ms = int((datetime.now(timezone.utc) + timedelta(days=2)).timestamp() * 1000)
+    past_ms = int((datetime.now(timezone.utc) - timedelta(days=2)).timestamp() * 1000)
+
+    def fake_post(url, json, timeout):
+        return _FakeResponse(
+            {
+                "status": 0,
+                "latest_receipt_info": [
+                    {
+                        "product_id": "subscription_daily_999",
+                        "transaction_id": "txn_old",
+                        "original_transaction_id": "orig_123",
+                        "expires_date_ms": str(past_ms),
+                    },
+                    {
+                        "product_id": "subscription_daily_999",
+                        "transaction_id": "txn_new",
+                        "original_transaction_id": "orig_123",
+                        "expires_date_ms": str(future_ms),
+                    },
+                ],
+            }
+        )
+
+    monkeypatch.setattr("purchase_verification.requests.post", fake_post)
+    result = service.verify_purchase(
+        product_id="subscription_daily_999",
+        transaction_id="orig_123",
+        receipt_data="signed-receipt",
+        is_subscription=True,
+    )
+
+    assert result.transaction_id == "txn_new"
+    assert result.entitlement_active is True
+
+
+def test_no_matching_product_or_transaction_is_rejected(monkeypatch) -> None:
+    monkeypatch.setenv("APPLE_SHARED_SECRET", "shared-secret")
+    service = PurchaseVerificationService()
+
+    def fake_post(url, json, timeout):
+        return _FakeResponse(
+            {
+                "status": 0,
+                "receipt": {
+                    "in_app": [
+                        {
+                            "product_id": "different_product",
+                            "transaction_id": "txn_1",
+                        }
+                    ]
+                },
+            }
+        )
+
+    monkeypatch.setattr("purchase_verification.requests.post", fake_post)
+
+    try:
+        service.verify_purchase(
+            product_id="reading_basic_199",
+            transaction_id="txn_expected",
+            receipt_data="signed-receipt",
+        )
+    except ValueError as exc:
+        assert "does not contain" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")

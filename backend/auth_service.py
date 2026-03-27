@@ -8,13 +8,15 @@ import jwt
 import uuid
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
 APP_ENV = os.getenv('APP_ENV', 'development').strip().lower() or 'development'
+APPLE_JWKS_URL = 'https://appleid.apple.com/auth/keys'
 
 
 class AuthService:
@@ -132,22 +134,7 @@ class AuthService:
         self,
         identity_token: str
     ) -> Optional[Dict[str, Any]]:
-        """
-        Verify Apple Sign In identity token.
-        
-        In production, this should:
-        1. Fetch Apple's public keys
-        2. Verify token signature
-        3. Validate claims (iss, aud, exp)
-        
-        For MVP, we'll do basic validation.
-        
-        Args:
-            identity_token: Apple identity token (JWT)
-            
-        Returns:
-            Decoded token payload or None if invalid
-        """
+        """Verify Apple Sign In identity token."""
         try:
             allow_insecure_apple_sign_in = os.getenv(
                 'ALLOW_INSECURE_APPLE_SIGN_IN',
@@ -157,29 +144,61 @@ class AuthService:
                 raise RuntimeError(
                     'ALLOW_INSECURE_APPLE_SIGN_IN cannot be enabled when APP_ENV=production',
                 )
-            if not allow_insecure_apple_sign_in:
-                return None
 
-            # Decode without verification (DEV ONLY)
-            # In production, verify signature against Apple's public keys
-            payload = jwt.decode(
-                identity_token,
-                options={"verify_signature": False}
-            )
-            
-            # Basic validation
+            if allow_insecure_apple_sign_in:
+                payload = jwt.decode(
+                    identity_token,
+                    options={"verify_signature": False}
+                )
+            else:
+                payload = self._decode_verified_apple_identity_token(identity_token)
+
             if payload.get('iss') != 'https://appleid.apple.com':
                 return None
-            
-            # Check expiration
+
             exp = payload.get('exp')
             if exp and datetime.fromtimestamp(exp, tz=timezone.utc) < datetime.now(timezone.utc):
                 return None
-            
+
             return payload
-            
         except Exception:
             return None
+
+    def _decode_verified_apple_identity_token(self, identity_token: str) -> Dict[str, Any]:
+        audiences = self._apple_sign_in_audiences()
+        if APP_ENV == 'production' and not audiences:
+            raise RuntimeError('APPLE_SIGN_IN_AUDIENCES must be set when APP_ENV=production')
+
+        signing_key = self._apple_signing_key(identity_token)
+        decode_kwargs: Dict[str, Any] = {
+            'algorithms': ['RS256'],
+            'issuer': 'https://appleid.apple.com',
+        }
+        if audiences:
+            decode_kwargs['audience'] = audiences if len(audiences) > 1 else audiences[0]
+        else:
+            decode_kwargs['options'] = {'verify_aud': False}
+
+        payload = jwt.decode(identity_token, signing_key, **decode_kwargs)
+        if not isinstance(payload, dict):
+            raise ValueError('Apple identity token payload must be a JSON object')
+        return payload
+
+    def _apple_signing_key(self, identity_token: str):
+        jwks_client = jwt.PyJWKClient(APPLE_JWKS_URL)
+        return jwks_client.get_signing_key_from_jwt(identity_token).key
+
+    def _apple_sign_in_audiences(self) -> List[str]:
+        raw = os.getenv('APPLE_SIGN_IN_AUDIENCES', '').strip()
+        if raw:
+            return [item.strip() for item in raw.split(',') if item.strip()]
+
+        fallbacks = [
+            os.getenv('APPLE_SERVICE_ID', '').strip(),
+            os.getenv('APPLE_BUNDLE_ID', '').strip(),
+            os.getenv('APPLE_CLIENT_ID', '').strip(),
+        ]
+        return [item for item in fallbacks if item]
     
     def hash_token(self, token: str) -> str:
         """
