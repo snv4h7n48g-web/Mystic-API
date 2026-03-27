@@ -1031,6 +1031,16 @@ def _flow_uses_tarot(flow_type: str) -> bool:
     return flow_type in {"combined", "tarot_solo"}
 
 
+def _current_lunar_year_context() -> Dict[str, Any]:
+    current_year = datetime.now(timezone.utc).year
+    zodiac = get_astrology_engine().calculate_chinese_zodiac(current_year)
+    return {
+        "year": current_year,
+        "zodiac": zodiac,
+        "label": f"{current_year}: Year of the {zodiac['combined']}",
+    }
+
+
 def _expected_tarot_card_count(flow_type: str) -> int:
     return 1 if flow_type == "tarot_solo" else 3
 
@@ -2323,36 +2333,41 @@ def generate_compatibility_reading(
     zodiac2 = astro_engine.calculate_chinese_zodiac(birth_year_2)
     zodiac_harmony = _zodiac_compatibility(zodiac1, zodiac2)
 
+    reading = None
     if USE_PERSONA_ORCHESTRATION:
-        orchestrator = get_generation_orchestrator()
-        orchestration_result = orchestrator.build_compatibility_reading_result(
-            compat=compat,
-            user=user,
-            person1=person1,
-            person2=person2,
-            chart1=chart1,
-            chart2=chart2,
-            synastry=synastry,
-            zodiac_harmony=zodiac_harmony,
-        )
-        reading = orchestration_result.payload
-        reading["metadata"].update(
-            {
-                "model": orchestration_result.metadata.model_id,
-                "input_tokens": orchestration_result.input_tokens,
-                "output_tokens": orchestration_result.output_tokens,
-            }
-        )
-        db_update_compatibility(
-            compat_id,
-            reading=reading,
-            reading_persona_id=orchestration_result.metadata.persona_id,
-            reading_llm_profile_id=orchestration_result.metadata.llm_profile_id,
-            reading_prompt_version=orchestration_result.metadata.prompt_version,
-            reading_theme_tags=orchestration_result.metadata.theme_tags,
-            reading_headline=orchestration_result.metadata.headline,
-        )
-    else:
+        try:
+            orchestrator = get_generation_orchestrator()
+            orchestration_result = orchestrator.build_compatibility_reading_result(
+                compat=compat,
+                user=user,
+                person1=person1,
+                person2=person2,
+                chart1=chart1,
+                chart2=chart2,
+                synastry=synastry,
+                zodiac_harmony=zodiac_harmony,
+            )
+            reading = orchestration_result.payload
+            reading["metadata"].update(
+                {
+                    "model": orchestration_result.metadata.model_id,
+                    "input_tokens": orchestration_result.input_tokens,
+                    "output_tokens": orchestration_result.output_tokens,
+                }
+            )
+            db_update_compatibility(
+                compat_id,
+                reading=reading,
+                reading_persona_id=orchestration_result.metadata.persona_id,
+                reading_llm_profile_id=orchestration_result.metadata.llm_profile_id,
+                reading_prompt_version=orchestration_result.metadata.prompt_version,
+                reading_theme_tags=orchestration_result.metadata.theme_tags,
+                reading_headline=orchestration_result.metadata.headline,
+            )
+        except Exception as exc:
+            print(f"Compatibility reading orchestration failed for {compat_id}: {exc}")
+
+    if reading is None:
         llm_result = bedrock.generate_compatibility_reading(
             person1={"profile": person1, "chart": chart1},
             person2={"profile": person2, "chart": chart2},
