@@ -1492,7 +1492,7 @@ def generate_preview(
 
     # Ensure tarot is drawn only for tarot-based flows
     if _flow_uses_tarot(flow_type) and not session["tarot"]:
-        generate_tarot(session_id)
+        generate_tarot(session_id, user)
         session = db_get_session(session_id)
 
     # Daily consistency (account + anonymous): return same-day result if it exists.
