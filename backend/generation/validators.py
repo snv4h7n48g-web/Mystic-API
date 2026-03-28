@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from .products.compatibility.validator import validate_compatibility_payload
 from .products.daily_horoscope.validator import validate_daily_payload
 from .products.feng_shui.validator import validate_feng_shui_payload
+from .products.full_reading.validator import validate_full_reading_payload
 from .products.lunar.validator import validate_lunar_payload
 from .products.palm.validator import validate_palm_payload
 from .products.tarot.validator import validate_tarot_payload
@@ -29,6 +30,7 @@ VALIDATORS = {
     "compatibility": validate_compatibility_payload,
     "palm": validate_palm_payload,
     "feng_shui": validate_feng_shui_payload,
+    "full_reading": validate_full_reading_payload,
 }
 
 RETRY_HINTS = {
@@ -38,6 +40,7 @@ RETRY_HINTS = {
     "compatibility": "Correct the output into a two-person compatibility reading. Make the relationship dynamics, strengths, tensions, and grounded guidance explicit.",
     "palm": "Correct the output into a palm-feature-led reading. Refer to palm lines, mounts, hand shape, or observed features and avoid generic divination prose.",
     "feng_shui": "Correct the output into a Feng Shui space analysis. Refer to rooms, layout, placement, flow, and practical recommendations.",
+    "full_reading": "Correct the output into a full premium reading with complete practical guidance. Replace stub or incomplete numbered guidance with 2-3 concrete, fully written guidance points.",
 }
 
 
