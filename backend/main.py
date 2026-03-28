@@ -50,7 +50,7 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-USE_PERSONA_ORCHESTRATION = _env_flag("MYSTIC_USE_PERSONA_ORCHESTRATION", False)
+USE_PERSONA_ORCHESTRATION = _env_flag("MYSTIC_USE_PERSONA_ORCHESTRATION", True)
 
 
 def _database_url() -> str:
