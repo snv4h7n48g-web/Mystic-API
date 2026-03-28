@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from .products.compatibility import contracts as compatibility_contracts
 from .products.daily_horoscope import contracts as daily_contracts
 from .products.feng_shui import contracts as feng_shui_contracts
+from .products.full_reading import contracts as full_reading_contracts
 from .products.lunar import contracts as lunar_contracts
 from .products.palm import contracts as palm_contracts
 from .products.tarot import contracts as tarot_contracts
@@ -54,6 +55,12 @@ CONTRACTS: dict[str, ProductContract] = {
         prompt_ids=feng_shui_contracts.PROMPT_IDS,
         expected_section_ids=feng_shui_contracts.EXPECTED_SECTION_IDS,
         contract_instruction=feng_shui_contracts.CONTRACT_INSTRUCTION,
+    ),
+    "full_reading": ProductContract(
+        product_key=full_reading_contracts.PRODUCT_KEY,
+        prompt_ids=full_reading_contracts.PROMPT_IDS,
+        expected_section_ids=full_reading_contracts.EXPECTED_SECTION_IDS,
+        contract_instruction=full_reading_contracts.CONTRACT_INSTRUCTION,
     ),
 }
 
