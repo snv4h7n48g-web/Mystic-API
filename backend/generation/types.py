@@ -24,10 +24,12 @@ class NormalizedMysticOutput:
     opening_hook: str
     current_pattern: str
     emotional_truth: str
-    practical_guidance: str
-    continuity_callback: Optional[str]
-    next_return_invitation: str
-    premium_teaser: Optional[str]
+    practical_guidance: str = ""
+    what_this_is_asking_of_you: str = ""
+    your_next_move: str = ""
+    continuity_callback: Optional[str] = None
+    next_return_invitation: str = ""
+    premium_teaser: Optional[str] = None
     theme_tags: list[str] = field(default_factory=list)
 
 

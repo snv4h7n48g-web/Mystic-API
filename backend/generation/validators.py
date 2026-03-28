@@ -40,7 +40,7 @@ RETRY_HINTS = {
     "compatibility": "Correct the output into a two-person compatibility reading. Make the relationship dynamics, strengths, tensions, and grounded guidance explicit.",
     "palm": "Correct the output into a palm-feature-led reading. Refer to palm lines, mounts, hand shape, or observed features and avoid generic divination prose.",
     "feng_shui": "Correct the output into a Feng Shui space analysis. Refer to rooms, layout, placement, flow, and practical recommendations.",
-    "full_reading": "Correct the output into a full premium reading with complete practical guidance. Replace stub or incomplete numbered guidance with 2-3 concrete, fully written guidance points.",
+    "full_reading": "Correct the output into a full premium reading with an explicit two-part payoff. Write both what_this_is_asking_of_you and your_next_move as distinct, complete prose sections. Do not return a dangling numbered list like '1.', do not use vague or ultra-short action text, and do not duplicate the payoff sections.",
 }
 
 

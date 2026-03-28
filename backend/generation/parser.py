@@ -13,7 +13,6 @@ REQUIRED_KEYS = {
     "opening_hook",
     "current_pattern",
     "emotional_truth",
-    "practical_guidance",
     "continuity_callback",
     "next_return_invitation",
     "premium_teaser",
@@ -31,6 +30,15 @@ def parse_normalized_output(raw_text: str) -> NormalizedMysticOutput:
     if missing:
         raise GenerationParseError(f"Missing required keys: {sorted(missing)}")
 
+    has_legacy_guidance = "practical_guidance" in payload
+    has_split_guidance = (
+        "what_this_is_asking_of_you" in payload and "your_next_move" in payload
+    )
+    if not has_legacy_guidance and not has_split_guidance:
+        raise GenerationParseError(
+            "Missing guidance payload: expected practical_guidance or both what_this_is_asking_of_you and your_next_move"
+        )
+
     theme_tags = payload.get("theme_tags") or []
     if not isinstance(theme_tags, list):
         raise GenerationParseError("theme_tags must be a list")
@@ -39,7 +47,9 @@ def parse_normalized_output(raw_text: str) -> NormalizedMysticOutput:
         opening_hook=str(payload["opening_hook"]),
         current_pattern=str(payload["current_pattern"]),
         emotional_truth=str(payload["emotional_truth"]),
-        practical_guidance=str(payload["practical_guidance"]),
+        practical_guidance=str(payload.get("practical_guidance") or ""),
+        what_this_is_asking_of_you=str(payload.get("what_this_is_asking_of_you") or ""),
+        your_next_move=str(payload.get("your_next_move") or ""),
         continuity_callback=(
             None if payload["continuity_callback"] is None else str(payload["continuity_callback"])
         ),

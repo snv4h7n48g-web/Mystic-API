@@ -11,6 +11,7 @@ from .product_contracts import get_product_contract
 from .product_routing import get_product_route_for_context
 from .products.daily_horoscope.continuity import filter_daily_continuity
 from .products.daily_horoscope.reading import build_daily_horoscope_reading_payload
+from .products.full_reading.formatter import build_full_reading_payload
 from .products.lunar.continuity import filter_lunar_continuity
 from .products.lunar.reading import build_lunar_reading_payload
 from .products.sun_moon.continuity import filter_sun_moon_continuity
@@ -145,6 +146,8 @@ class MysticGenerationOrchestrator:
                 if context.flow_type == "tarot_solo"
                 else build_sun_moon_reading_payload(normalized=normalized, metadata=metadata)
                 if context.flow_type == "sun_moon_solo"
+                else build_full_reading_payload(normalized=normalized, metadata=metadata)
+                if context.flow_type == "combined"
                 else build_reading_payload(normalized=normalized, metadata=metadata)
             )
             payload["metadata"].update({
@@ -241,6 +244,17 @@ class MysticGenerationOrchestrator:
         _, _, final_result, final_payload, final_validation = attempts[-1]
         final_attempt_count = len(attempts)
         self._attach_contract_metadata(context=context, payload=final_payload, validation=final_validation, attempts=final_attempt_count)
+        final_guidance_text = next((section.get("text", "") for section in final_payload.get("sections", []) if section.get("id") in {"practical_guidance", "reflective_guidance"}), "")
+        logger.warning(
+            "quality_gate_final product=%s flow=%s surface=%s attempts=%s passed=%s issues=%s guidance=%r",
+            route.product_key,
+            context.flow_type,
+            context.surface,
+            final_attempt_count,
+            final_validation.passed,
+            final_validation.issues,
+            final_guidance_text[:240],
+        )
         final_result.payload = final_payload
         if final_attempt_count > 1:
             final_result.input_tokens = sum(attempt[2].input_tokens for attempt in attempts)
