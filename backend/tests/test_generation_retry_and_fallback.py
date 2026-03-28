@@ -1,0 +1,316 @@
+from __future__ import annotations
+
+import json
+
+from generation.orchestration import MysticGenerationOrchestrator
+from generation.types import GenerationContext, GenerationMetadata, NormalizedMysticOutput, OrchestrationResult
+
+
+class StubRetryOrchestrator(MysticGenerationOrchestrator):
+    def __init__(self, responses: list[dict]):
+        self.responses = responses
+        self.retry_instructions: list[str | None] = []
+
+    def _invoke_normalized_generation(self, **kwargs):
+        self.retry_instructions.append(kwargs.get("retry_instruction"))
+        response = self.responses.pop(0)
+        return response["normalized"], response["metadata"], response["result"]
+
+
+class StubBedrockService:
+    def __init__(self, responses_by_model: dict[str, list[dict | Exception]]):
+        self.responses_by_model = {key: list(value) for key, value in responses_by_model.items()}
+        self.calls: list[dict] = []
+
+    def invoke_text(self, **kwargs):
+        self.calls.append(kwargs)
+        model_id = kwargs["model_id"]
+        response = self.responses_by_model[model_id].pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+class ValidatorSpy:
+    def __init__(self, results):
+        self.results = list(results)
+        self.calls: list[tuple[str, dict]] = []
+
+    def __call__(self, product_key: str, payload: dict):
+        self.calls.append((product_key, payload))
+        return self.results.pop(0)
+
+
+def _response(*, opening: str, current: str, emotional: str, guidance: str, closing: str):
+    normalized = NormalizedMysticOutput(
+        opening_hook=opening,
+        current_pattern=current,
+        emotional_truth=emotional,
+        practical_guidance=guidance,
+        continuity_callback=None,
+        next_return_invitation=closing,
+        premium_teaser="Another layer.",
+        theme_tags=["test"],
+    )
+    metadata = GenerationMetadata(
+        persona_id="ancient_tarot_reader",
+        llm_profile_id="full_premium",
+        prompt_version="mystic-v1",
+        model_id="test-model",
+        theme_tags=["test"],
+        headline=opening,
+    )
+    result = OrchestrationResult(payload={}, metadata=metadata, input_tokens=10, output_tokens=20, cost_usd=0.5)
+    return {"normalized": normalized, "metadata": metadata, "result": result}
+
+
+def _normalized_json(*, opening: str, current: str, emotional: str, guidance: str, closing: str) -> str:
+    return json.dumps(
+        {
+            "opening_hook": opening,
+            "current_pattern": current,
+            "emotional_truth": emotional,
+            "practical_guidance": guidance,
+            "continuity_callback": None,
+            "next_return_invitation": closing,
+            "premium_teaser": "Another layer.",
+            "theme_tags": ["test"],
+        }
+    )
+
+
+def test_retry_correction_applies_once_and_returns_corrected_payload(monkeypatch) -> None:
+    from generation.validators import ValidationResult
+
+    orchestrator = StubRetryOrchestrator(
+        responses=[
+            _response(
+                opening="Trust the moment.",
+                current="Stay positive.",
+                emotional="Keep going.",
+                guidance="Let the day unfold.",
+                closing="Return soon.",
+            ),
+            _response(
+                opening="The Hermit opens the spread.",
+                current="The Hermit in the guidance position asks for retreat; the card's symbolism points to discernment before action.",
+                emotional="The spread shows that solitude is a tool, not a wall.",
+                guidance="Use the card's lantern image as your cue to move one clear step at a time.",
+                closing="Return when the next card is ready.",
+            ),
+        ]
+    )
+    validation_spy = ValidatorSpy(
+        [
+            ValidationResult(
+                product_key="tarot",
+                passed=False,
+                issues=["tarot_missing_card_specific_language"],
+                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards or spread logic, explain symbolism, and synthesise the cards into guidance.",
+            ),
+            ValidationResult(product_key="tarot", passed=True, issues=[]),
+        ]
+    )
+    monkeypatch.setattr("generation.orchestration.validate_product_payload", validation_spy)
+
+    context = GenerationContext(object_id="1", object_type="session", flow_type="tarot_solo", surface="full")
+    result = orchestrator._generate_with_quality_gate(
+        context=context,
+        persona_id="ancient_tarot_reader",
+        flow_id="tarot_reading",
+        continuity_context={},
+        domain_context={},
+        contract_instruction="tarot contract",
+        payload_builder_kwargs={},
+    )
+
+    assert orchestrator.retry_instructions == [
+        None,
+        "Correct the output into a card-led tarot reading. Name the actual cards or spread logic, explain symbolism, and synthesise the cards into guidance.",
+    ]
+    assert len(validation_spy.calls) == 2
+    assert result.payload["sections"][0]["text"] == "The Hermit opens the spread."
+    assert result.payload["metadata"]["validation"]["attempts"] == 2
+    assert result.payload["metadata"]["validation"]["valid"] is True
+    assert result.input_tokens == 20
+    assert result.output_tokens == 40
+
+
+def test_exhausted_retry_returns_best_available_full_payload_with_validation_metadata(monkeypatch) -> None:
+    from generation.validators import ValidationResult
+
+    orchestrator = StubRetryOrchestrator(
+        responses=[
+            _response(
+                opening="Trust the moment.",
+                current="Stay positive.",
+                emotional="Keep going.",
+                guidance="Let the day unfold.",
+                closing="Return soon.",
+            ),
+            _response(
+                opening="Still vague.",
+                current="Listen inward.",
+                emotional="A message is near.",
+                guidance="Be open.",
+                closing="Return soon.",
+            ),
+        ]
+    )
+    validation_spy = ValidatorSpy(
+        [
+            ValidationResult(
+                product_key="tarot",
+                passed=False,
+                issues=["tarot_missing_card_specific_language"],
+                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards or spread logic, explain symbolism, and synthesise the cards into guidance.",
+            ),
+            ValidationResult(
+                product_key="tarot",
+                passed=False,
+                issues=["tarot_missing_card_specific_language", "tarot_missing_spread_context"],
+                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards or spread logic, explain symbolism, and synthesise the cards into guidance.",
+            ),
+        ]
+    )
+    monkeypatch.setattr("generation.orchestration.validate_product_payload", validation_spy)
+
+    context = GenerationContext(object_id="1", object_type="session", flow_type="tarot_solo", surface="full")
+    result = orchestrator._generate_with_quality_gate(
+        context=context,
+        persona_id="ancient_tarot_reader",
+        flow_id="tarot_reading",
+        continuity_context={},
+        domain_context={},
+        contract_instruction="tarot contract",
+        payload_builder_kwargs={},
+    )
+
+    assert len(orchestrator.retry_instructions) == 2
+    assert len(validation_spy.calls) == 2
+    assert result.payload["sections"][0]["text"] == "Still vague."
+    assert result.payload["metadata"]["validation"]["attempts"] == 2
+    assert result.payload["metadata"]["validation"]["valid"] is False
+    assert result.payload["metadata"]["validation"]["issues"] == [
+        "tarot_missing_card_specific_language",
+        "tarot_missing_spread_context",
+    ]
+
+
+def test_exhausted_retry_preview_payload_does_not_leak_validation_metadata(monkeypatch) -> None:
+    from generation.validators import ValidationResult
+
+    orchestrator = StubRetryOrchestrator(
+        responses=[
+            _response(
+                opening="Trust the moment.",
+                current="Stay positive.",
+                emotional="Keep going.",
+                guidance="Let the day unfold.",
+                closing="Return soon.",
+            ),
+            _response(
+                opening="Still vague.",
+                current="Listen inward.",
+                emotional="A message is near.",
+                guidance="Be open.",
+                closing="Return soon.",
+            ),
+        ]
+    )
+    validation_spy = ValidatorSpy(
+        [
+            ValidationResult(
+                product_key="tarot",
+                passed=False,
+                issues=["tarot_missing_card_specific_language"],
+                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards or spread logic, explain symbolism, and synthesise the cards into guidance.",
+            ),
+            ValidationResult(
+                product_key="tarot",
+                passed=False,
+                issues=["tarot_missing_card_specific_language", "tarot_missing_spread_context"],
+                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards or spread logic, explain symbolism, and synthesise the cards into guidance.",
+            ),
+        ]
+    )
+    monkeypatch.setattr("generation.orchestration.validate_product_payload", validation_spy)
+
+    context = GenerationContext(object_id="1", object_type="session", flow_type="tarot_solo", surface="preview")
+    result = orchestrator._generate_with_quality_gate(
+        context=context,
+        persona_id="ancient_tarot_reader",
+        flow_id="tarot_preview",
+        continuity_context={},
+        domain_context={},
+        contract_instruction="tarot contract",
+        payload_builder_kwargs={
+            "unlock_price": {"currency": "USD", "amount": 3.99},
+            "product_id": "tarot",
+            "entitlements": {},
+            "astrology_facts": {},
+            "tarot_payload": {},
+        },
+    )
+
+    assert len(orchestrator.retry_instructions) == 2
+    assert len(validation_spy.calls) == 2
+    assert "validation" not in result.payload["meta"]
+    assert "expected_section_ids" not in result.payload["meta"]
+
+
+def test_anthropic_preferred_route_falls_back_to_configured_model(monkeypatch) -> None:
+    context = GenerationContext(object_id="1", object_type="session", flow_type="daily_horoscope", surface="full")
+    orchestrator = MysticGenerationOrchestrator()
+
+    primary_model = "us.anthropic.claude-opus-4-1-20250805-v1:0"
+    fallback_model = "us.amazon.nova-pro-v1:0"
+    bedrock = StubBedrockService(
+        {
+            primary_model: [RuntimeError("primary provider failed")],
+            fallback_model: [
+                {
+                    "text": _normalized_json(
+                        opening="Today starts with clarity.",
+                        current="The day is asking for one direct move, not five half-steps.",
+                        emotional="You already know what needs trimming.",
+                        guidance="Pick the task that clears the most friction before lunch.",
+                        closing="Come back tomorrow for the next pulse.",
+                    ),
+                    "input_tokens": 12,
+                    "output_tokens": 34,
+                    "cost_usd": 0.12,
+                    "model": fallback_model,
+                }
+            ],
+        }
+    )
+
+    monkeypatch.setattr("generation.orchestration.get_bedrock_service", lambda: bedrock)
+    monkeypatch.setattr(
+        "generation.orchestration.get_product_route_for_context",
+        lambda _context: type(
+            "Route",
+            (),
+            {
+                "product_key": "daily",
+                "fallback_model_id": fallback_model,
+                "profile_id_for_surface": lambda self, surface: "daily_retention",
+                "model_id_for_surface": lambda self, surface: primary_model,
+                "max_tokens_for_surface": lambda self, surface: 1600,
+            },
+        )(),
+    )
+
+    normalized, metadata, result = orchestrator._invoke_normalized_generation(
+        context=context,
+        persona_id="practical_astrologer",
+        flow_id="daily_horoscope_reading",
+        continuity_context={},
+        domain_context={"flow_type": "daily_horoscope"},
+    )
+
+    assert [call["model_id"] for call in bedrock.calls] == [primary_model, fallback_model]
+    assert metadata.model_id == fallback_model
+    assert result.metadata.model_id == fallback_model
+    assert normalized.opening_hook == "Today starts with clarity."

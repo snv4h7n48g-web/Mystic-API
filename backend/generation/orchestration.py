@@ -48,14 +48,6 @@ class MysticGenerationOrchestrator:
         persona = get_persona(persona_id)
         route = get_product_route_for_context(context)
         base_profile = get_llm_profile(route.profile_id_for_surface(context.surface))
-        profile = LlmProfile(
-            id=base_profile.id,
-            model_id=route.model_id_for_surface(context.surface),
-            temperature=base_profile.temperature,
-            top_p=base_profile.top_p,
-            max_tokens=route.max_tokens_for_surface(context.surface),
-            timeout_ms=base_profile.timeout_ms,
-        )
         prompt = compose_generation_prompt(
             persona_id=persona.id,
             flow_id=flow_id,
@@ -65,31 +57,53 @@ class MysticGenerationOrchestrator:
             retry_instruction=retry_instruction,
         )
         bedrock = get_bedrock_service()
-        llm_result = bedrock.invoke_text(
-            model_id=profile.model_id,
-            system_prompt=prompt["system_prompt"],
-            user_messages=prompt["messages"],
-            temperature=profile.temperature,
-            top_p=profile.top_p,
-            max_tokens=profile.max_tokens,
-        )
-        normalized = parse_normalized_output(llm_result["text"])
-        metadata = GenerationMetadata(
-            persona_id=persona.id,
-            llm_profile_id=profile.id,
-            prompt_version=prompt["prompt_version"],
-            model_id=llm_result["model"],
-            theme_tags=normalized.theme_tags,
-            headline=normalized.opening_hook,
-        )
-        result = OrchestrationResult(
-            payload={},
-            metadata=metadata,
-            input_tokens=llm_result["input_tokens"],
-            output_tokens=llm_result["output_tokens"],
-            cost_usd=llm_result["cost_usd"],
-        )
-        return normalized, metadata, result
+
+        candidate_model_ids = [route.model_id_for_surface(context.surface)]
+        fallback_model_id = route.fallback_model_id
+        if fallback_model_id and fallback_model_id not in candidate_model_ids:
+            candidate_model_ids.append(fallback_model_id)
+
+        last_error: Exception | None = None
+        for candidate_model_id in candidate_model_ids:
+            profile = LlmProfile(
+                id=base_profile.id,
+                model_id=candidate_model_id,
+                temperature=base_profile.temperature,
+                top_p=base_profile.top_p,
+                max_tokens=route.max_tokens_for_surface(context.surface),
+                timeout_ms=base_profile.timeout_ms,
+            )
+            try:
+                llm_result = bedrock.invoke_text(
+                    model_id=profile.model_id,
+                    system_prompt=prompt["system_prompt"],
+                    user_messages=prompt["messages"],
+                    temperature=profile.temperature,
+                    top_p=profile.top_p,
+                    max_tokens=profile.max_tokens,
+                )
+                normalized = parse_normalized_output(llm_result["text"])
+                metadata = GenerationMetadata(
+                    persona_id=persona.id,
+                    llm_profile_id=profile.id,
+                    prompt_version=prompt["prompt_version"],
+                    model_id=llm_result["model"],
+                    theme_tags=normalized.theme_tags,
+                    headline=normalized.opening_hook,
+                )
+                result = OrchestrationResult(
+                    payload={},
+                    metadata=metadata,
+                    input_tokens=llm_result["input_tokens"],
+                    output_tokens=llm_result["output_tokens"],
+                    cost_usd=llm_result["cost_usd"],
+                )
+                return normalized, metadata, result
+            except Exception as exc:
+                last_error = exc
+
+        assert last_error is not None
+        raise last_error
 
     def _attach_contract_metadata(self, *, context: GenerationContext, payload: dict, validation: ValidationResult | None = None, attempts: int = 1) -> None:
         contract = get_product_contract(get_product_route_for_context(context).product_key)
