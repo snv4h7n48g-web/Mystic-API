@@ -16,10 +16,23 @@ def test_full_reading_validator_flags_stub_guidance():
     assert result.retry_hint is not None
 
 
+def test_full_reading_validator_flags_dangling_numbered_guidance():
+    payload = {
+        'sections': [
+            {'id': 'practical_guidance', 'text': 'To navigate this intricate terrain, consider these steps: 1.'},
+        ]
+    }
+
+    result = validate_product_payload('full_reading', payload)
+
+    assert result.passed is False
+    assert 'full_reading_stub_guidance' in result.issues
+
+
 def test_full_reading_validator_accepts_real_guidance():
     payload = {
         'sections': [
-            {'id': 'practical_guidance', 'text': 'Start by naming the pattern without trying to fix it instantly, then choose one small boundary you can actually hold this week.'},
+            {'id': 'practical_guidance', 'text': 'Start by naming the pattern without trying to fix it instantly, then choose one small boundary you can actually hold this week. Let one decision become the proof that your clarity matters more than your urgency.'},
         ]
     }
 
