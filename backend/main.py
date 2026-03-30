@@ -1535,45 +1535,47 @@ def generate_preview(
         session = db_get_session(session_id)
 
     # Daily consistency (account + anonymous): return same-day result if it exists.
-    tz_name = session.get("timezone")
-    sessions_to_check = [session]
-    current_contract_signature = _content_contract_signature(
-        _session_content_contract(session)
-    )
-    if user:
-        user_service = get_user_service()
-        linked_sessions = user_service.get_user_sessions(user_id=str(user["id"]), limit=1000)
-        sessions_to_check = linked_sessions + [session]
-
-    latest_today = _find_latest_response_today(sessions_to_check, tz_name)
-    if latest_today:
-        latest_signature = _content_contract_signature(
-            _payload_content_contract(
-                latest_today["kind"],
-                latest_today.get("payload"),
-            )
+    # Do not reuse same-day previews/readings across non-daily flows.
+    if flow_type == "daily_horoscope":
+        tz_name = session.get("timezone")
+        sessions_to_check = [session]
+        current_contract_signature = _content_contract_signature(
+            _session_content_contract(session)
         )
-        if latest_signature != current_contract_signature:
-            latest_today = None
-    if latest_today:
-        if latest_today["kind"] == "preview":
-            db_update_session(
-                session_id,
-                preview=latest_today["payload"],
-                status="preview_ready",
+        if user:
+            user_service = get_user_service()
+            linked_sessions = user_service.get_user_sessions(user_id=str(user["id"]), limit=1000)
+            sessions_to_check = linked_sessions + [session]
+
+        latest_today = _find_latest_response_today(sessions_to_check, tz_name)
+        if latest_today:
+            latest_signature = _content_contract_signature(
+                _payload_content_contract(
+                    latest_today["kind"],
+                    latest_today.get("payload"),
+                )
             )
-            return {"status": "preview_ready", "preview": latest_today["payload"]}
-        if latest_today["kind"] == "reading":
-            for sess in sessions_to_check:
-                if str(sess.get("id")) == str(latest_today["session_id"]):
-                    existing_preview = _extract_preview(sess)
-                    if existing_preview:
-                        db_update_session(
-                            session_id,
-                            preview=existing_preview,
-                            status="preview_ready",
-                        )
-                        return {"status": "preview_ready", "preview": existing_preview}
+            if latest_signature != current_contract_signature:
+                latest_today = None
+        if latest_today:
+            if latest_today["kind"] == "preview":
+                db_update_session(
+                    session_id,
+                    preview=latest_today["payload"],
+                    status="preview_ready",
+                )
+                return {"status": "preview_ready", "preview": latest_today["payload"]}
+            if latest_today["kind"] == "reading":
+                for sess in sessions_to_check:
+                    if str(sess.get("id")) == str(latest_today["session_id"]):
+                        existing_preview = _extract_preview(sess)
+                        if existing_preview:
+                            db_update_session(
+                                session_id,
+                                preview=existing_preview,
+                                status="preview_ready",
+                            )
+                            return {"status": "preview_ready", "preview": existing_preview}
 
     try:
         # Get services
