@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from bedrock_service import get_bedrock_service
 
 from .continuity.builder import build_continuity_context
