@@ -25,6 +25,9 @@ from .types import GenerationContext, GenerationMetadata, NormalizedMysticOutput
 from .validators import ValidationResult, validate_product_payload
 
 
+logger = logging.getLogger("mystic.orchestration")
+
+
 class MysticGenerationOrchestrator:
     """Phase-3 product-aware orchestration with bounded validation retries."""
 
