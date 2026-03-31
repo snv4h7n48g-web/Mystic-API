@@ -40,7 +40,7 @@ RETRY_HINTS = {
     "compatibility": "Correct the output into a two-person compatibility reading. Make the relationship dynamics, strengths, tensions, and grounded guidance explicit.",
     "palm": "Correct the output into a palm-feature-led reading. Refer to palm lines, mounts, hand shape, or observed features and avoid generic divination prose.",
     "feng_shui": "Correct the output into a Feng Shui space analysis. Refer to rooms, layout, placement, flow, and practical recommendations.",
-    "full_reading": "Correct the output into a full premium reading with an explicit two-part payoff. Write both what_this_is_asking_of_you and your_next_move as distinct, complete prose sections. Do not return a dangling numbered list like '1.', do not use vague or ultra-short action text, and do not duplicate the payoff sections.",
+    "full_reading": "Correct the output into a layered full premium reading. Provide a non-duplicative three-line snapshot, then distinct body sections for reading_opening, palm_revelation when palm is present, tarot_message with actual cards/spread interpretation, signals_agree, what_this_is_asking_of_you, and your_next_move. Do not let summary repeat body, do not let palm disappear, do not make tarot decorative, and do not duplicate the payoff sections.",
 }
 
 

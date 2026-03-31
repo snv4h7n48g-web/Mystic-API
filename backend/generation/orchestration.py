@@ -129,7 +129,7 @@ class MysticGenerationOrchestrator:
         }
         metadata["expected_section_ids"] = contract.expected_section_ids
 
-    def _build_payload_for_context(self, *, context: GenerationContext, normalized: NormalizedMysticOutput, metadata: GenerationMetadata, unlock_price: dict | None = None, product_id: str | None = None, entitlements: dict | None = None, astrology_facts: dict | None = None, tarot_payload: dict | None = None, include_palm: bool = False, deep_access: bool = False, content_contract: dict | None = None, person1: dict | None = None, person2: dict | None = None, chart1: dict | None = None, chart2: dict | None = None, zodiac1: dict | None = None, zodiac2: dict | None = None, synastry: dict | None = None, zodiac_harmony: dict | None = None, analysis: dict | None = None, price_amount: float = 0.0) -> dict:
+    def _build_payload_for_context(self, *, context: GenerationContext, normalized: NormalizedMysticOutput, metadata: GenerationMetadata, unlock_price: dict | None = None, product_id: str | None = None, entitlements: dict | None = None, astrology_facts: dict | None = None, tarot_payload: dict | None = None, palm_features: list[dict] | None = None, include_palm: bool = False, deep_access: bool = False, content_contract: dict | None = None, person1: dict | None = None, person2: dict | None = None, chart1: dict | None = None, chart2: dict | None = None, zodiac1: dict | None = None, zodiac2: dict | None = None, synastry: dict | None = None, zodiac_harmony: dict | None = None, analysis: dict | None = None, price_amount: float = 0.0) -> dict:
         if context.object_type == "session" and context.surface == "preview":
             return build_preview_payload(
                 normalized=normalized,
@@ -151,7 +151,15 @@ class MysticGenerationOrchestrator:
                 if context.flow_type == "tarot_solo"
                 else build_sun_moon_reading_payload(normalized=normalized, metadata=metadata)
                 if context.flow_type == "sun_moon_solo"
-                else build_full_reading_payload(normalized=normalized, metadata=metadata)
+                else build_full_reading_payload(
+                    normalized=normalized,
+                    metadata=metadata,
+                    question=context.question,
+                    tarot_payload=tarot_payload or {},
+                    palm_features=palm_features or [],
+                    include_palm=include_palm,
+                    content_contract=content_contract or {},
+                )
                 if context.flow_type == "combined"
                 else build_reading_payload(normalized=normalized, metadata=metadata)
             )
@@ -220,7 +228,8 @@ class MysticGenerationOrchestrator:
 
     def _generate_with_quality_gate(self, *, context: GenerationContext, persona_id: str, flow_id: str, continuity_context: dict | None, domain_context: dict, contract_instruction: str | None = None, payload_builder_kwargs: dict | None = None) -> OrchestrationResult:
         payload_builder_kwargs = payload_builder_kwargs or {}
-        contract = get_product_contract(get_product_route_for_context(context).product_key)
+        route = get_product_route_for_context(context)
+        contract = get_product_contract(route.product_key)
         attempts: list[tuple[NormalizedMysticOutput, GenerationMetadata, OrchestrationResult, dict, ValidationResult]] = []
         retry_instruction: str | None = None
 
@@ -374,6 +383,8 @@ class MysticGenerationOrchestrator:
             },
             contract_instruction=(contract.contract_instruction if contract else None),
             payload_builder_kwargs={
+                "tarot_payload": tarot_payload,
+                "palm_features": palm_features or [],
                 "include_palm": include_palm,
                 "deep_access": deep_access,
                 "content_contract": content_contract,

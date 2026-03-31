@@ -55,4 +55,11 @@ def parse_normalized_output(raw_text: str) -> NormalizedMysticOutput:
         next_return_invitation=str(payload.get("next_return_invitation") or payload.get("premium_teaser") or ""),
         premium_teaser=None if payload["premium_teaser"] is None else str(payload["premium_teaser"]),
         theme_tags=[str(tag) for tag in theme_tags],
+        snapshot_core_theme=str(payload.get("snapshot_core_theme") or ""),
+        snapshot_main_tension=str(payload.get("snapshot_main_tension") or ""),
+        snapshot_best_next_move=str(payload.get("snapshot_best_next_move") or ""),
+        reading_opening=str(payload.get("reading_opening") or ""),
+        palm_revelation=str(payload.get("palm_revelation") or ""),
+        tarot_message=str(payload.get("tarot_message") or ""),
+        signals_agree=str(payload.get("signals_agree") or ""),
     )

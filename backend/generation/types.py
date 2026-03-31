@@ -31,6 +31,13 @@ class NormalizedMysticOutput:
     next_return_invitation: str = ""
     premium_teaser: Optional[str] = None
     theme_tags: list[str] = field(default_factory=list)
+    snapshot_core_theme: str = ""
+    snapshot_main_tension: str = ""
+    snapshot_best_next_move: str = ""
+    reading_opening: str = ""
+    palm_revelation: str = ""
+    tarot_message: str = ""
+    signals_agree: str = ""
 
 
 @dataclass
