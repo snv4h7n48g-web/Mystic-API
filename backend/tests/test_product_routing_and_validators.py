@@ -6,8 +6,15 @@ def test_daily_route_prefers_anthropic_text_lane_by_default() -> None:
     route = get_product_route(flow_type="daily_horoscope", surface="preview")
     assert resolve_product_key(flow_type="daily_horoscope") == "daily"
     assert route.product_key == "daily"
+    assert route.persona_hint == "psychic_best_friend"
     assert "anthropic" in route.preview_model_id or route.preview_model_id == "us.amazon.nova-pro-v1:0"
     assert route.fallback_model_id.startswith("us.amazon.nova")
+
+
+def test_full_reading_route_has_explicit_flagship_persona_hint() -> None:
+    route = get_product_route(flow_type="combined", surface="reading")
+    assert route.product_key == "full_reading"
+    assert route.persona_hint == "flagship_mystic"
 
 
 def test_lunar_validator_flags_daily_drift_and_duplicates() -> None:
@@ -32,6 +39,31 @@ def test_daily_validator_flags_year_ahead_drift() -> None:
     result = validate_product_payload("daily", payload)
     assert result.valid is False
     assert any(issue.startswith("daily_drift_detected") for issue in result.issues)
+
+
+def test_daily_validator_flags_heading_body_repetition() -> None:
+    payload = {
+        "sections": [
+            {"id": "today_theme", "text": "Today theme: today theme is patience and restraint."},
+            {"id": "best_move", "text": "Choose the smallest decision that clears backlog before lunch."},
+        ]
+    }
+    result = validate_product_payload("daily", payload)
+    assert result.valid is False
+    assert "daily_heading_body_repetition:today_theme" in result.issues
+
+
+def test_daily_validator_flags_repeated_section_stems() -> None:
+    payload = {
+        "sections": [
+            {"id": "today_theme", "text": "Today asks you to slow down before you answer anyone important."},
+            {"id": "today_energy", "text": "Today asks you to slow down before you spend energy in the wrong place."},
+            {"id": "best_move", "text": "Choose one clear priority and finish it before the afternoon fragments."},
+        ]
+    }
+    result = validate_product_payload("daily", payload)
+    assert result.valid is False
+    assert any(issue.startswith("daily_repeated_section_stem:") for issue in result.issues)
 
 
 def test_tarot_validator_requires_card_specific_structure() -> None:

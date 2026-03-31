@@ -45,6 +45,37 @@ def test_full_reading_validator_flags_duplicate_payoff_sections() -> None:
     assert 'full_reading_duplicate_payoff_sections' in result.issues
 
 
+def test_full_reading_validator_flags_repeated_opening_line_across_sections() -> None:
+    repeated = 'The real shift begins when you stop calling this confusion.'
+    payload = {
+        'sections': [
+            {'id': 'opening_hook', 'text': repeated + ' It is a threshold moment, not a fog.'},
+            {'id': 'current_pattern', 'text': repeated + ' You have been circling the same emotional bargain instead of naming it.'},
+            {'id': 'what_this_is_asking_of_you', 'text': 'This is asking you to stop protecting ambiguity when clarity already has a shape.'},
+            {'id': 'your_next_move', 'text': 'Name the decision out loud today and remove one habit that keeps the situation conveniently unresolved.'},
+        ]
+    }
+
+    result = validate_product_payload('full_reading', payload)
+
+    assert result.passed is False
+    assert any(issue.startswith('full_reading_repeated_opening_line:') for issue in result.issues)
+
+
+def test_full_reading_validator_flags_heading_restatement() -> None:
+    payload = {
+        'sections': [
+            {'id': 'what_this_is_asking_of_you', 'text': 'What this is asking of you: what this is asking of you is to trust yourself more deeply and completely.'},
+            {'id': 'your_next_move', 'text': 'Choose one direct conversation before tonight and keep it specific enough to finish, not just begin.'},
+        ]
+    }
+
+    result = validate_product_payload('full_reading', payload)
+
+    assert result.passed is False
+    assert 'full_reading_heading_body_repetition:what_this_is_asking_of_you' in result.issues
+
+
 def test_full_reading_validator_accepts_real_two_part_payoff() -> None:
     payload = {
         'sections': [

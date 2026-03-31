@@ -53,7 +53,7 @@ PRODUCT_ROUTES: dict[str, ProductRoute] = {
         fallback_model_id=_env("MYSTIC_ROUTE_DAILY_FALLBACK_MODEL", DEFAULT_NOVA_FULL_MODEL),
         preview_max_tokens=700,
         full_max_tokens=1600,
-        persona_hint="daily_retention",
+        persona_hint="psychic_best_friend",
     ),
     "lunar": ProductRoute(
         product_key="lunar",
@@ -86,7 +86,7 @@ PRODUCT_ROUTES: dict[str, ProductRoute] = {
         fallback_model_id=_env("MYSTIC_ROUTE_FULL_READING_FALLBACK_MODEL", DEFAULT_NOVA_FULL_MODEL),
         preview_max_tokens=900,
         full_max_tokens=1800,
-        persona_hint="premium_mystic",
+        persona_hint="flagship_mystic",
     ),
     "palm": ProductRoute(
         product_key="palm",

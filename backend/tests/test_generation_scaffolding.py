@@ -90,6 +90,32 @@ def test_choose_persona_routes_feng_shui_preview_to_practical_astrologer() -> No
     assert persona == "practical_astrologer"
 
 
+def test_choose_persona_routes_full_reading_to_flagship_mystic() -> None:
+    persona = choose_persona(
+        GenerationContext(
+            object_id="r1",
+            object_type="reading",
+            flow_type="combined",
+            surface="reading",
+        )
+    )
+
+    assert persona == "flagship_mystic"
+
+
+def test_choose_persona_keeps_daily_on_refined_psychic_best_friend() -> None:
+    persona = choose_persona(
+        GenerationContext(
+            object_id="d1",
+            object_type="horoscope",
+            flow_type="daily_horoscope",
+            surface="reading",
+        )
+    )
+
+    assert persona == "psychic_best_friend"
+
+
 def test_invoke_text_uses_bedrock_converse_and_returns_usage() -> None:
     service = BedrockService.__new__(BedrockService)
     service.costs = {
