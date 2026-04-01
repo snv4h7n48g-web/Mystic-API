@@ -19,7 +19,7 @@ _CARD_MARKERS = [
     'queen of', 'king of',
 ]
 _PALM_MARKERS = ['palm', 'life line', 'heart line', 'head line', 'fate line', 'mount', 'thumb', 'finger', 'hand shape', 'texture']
-_TAROT_STRUCTURE_MARKERS = ['card', 'cards', 'spread', 'position', 'together', 'interaction', 'interact']
+_TAROT_STRUCTURE_MARKERS = ['card', 'cards', 'spread', 'position', 'together', 'interaction', 'interact', 'crossing', 'present', 'past', 'future']
 _ACTION_MARKERS = ['choose', 'send', 'ask', 'name', 'make', 'begin', 'start', 'stop', 'schedule', 'say', 'write', 'set', 'clear']
 
 
@@ -93,6 +93,17 @@ def _is_too_similar(a: str, b: str) -> bool:
         return False
     return overlap >= max(4, int(shortest * 0.8))
 
+
+
+
+def _is_human_readable_label(text: str) -> bool:
+    cleaned = text.strip()
+    return bool(cleaned) and '_' not in cleaned and any(ch.isalpha() for ch in cleaned)
+
+
+def _is_shallow_interpretation(text: str) -> bool:
+    tokens = _content_tokens(text)
+    return len(tokens) < 6
 
 def validate_full_reading_payload(payload: dict) -> list[str]:
     sections = payload.get('sections', [])
@@ -178,11 +189,20 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
         evidence_items = palm_evidence.get('items') if isinstance(palm_evidence.get('items'), list) else []
         if not any(marker in lowered for marker in _PALM_MARKERS) and not palm_signals and not evidence_items:
             issues.append('full_reading_palm_section_missing_feature_evidence')
+        if isinstance(palm_signals, list) and palm_signals:
+            if not any(str(signal.get('relevance', '')).strip() for signal in palm_signals if isinstance(signal, dict)):
+                issues.append('full_reading_palm_section_missing_question_link')
+            if not any(str(signal.get('observation', '')).strip() for signal in palm_signals if isinstance(signal, dict)):
+                issues.append('full_reading_palm_section_missing_signal_state')
+            if not all(_is_human_readable_label(str((signal.get('display_name') or signal.get('feature') or ''))) for signal in palm_signals if isinstance(signal, dict)):
+                issues.append('full_reading_palm_section_non_human_labels')
 
     if tarot:
         lowered = tarot.casefold()
         tarot_evidence = tarot_section.get('evidence') if isinstance(tarot_section.get('evidence'), dict) else {}
-        tarot_cards = ((tarot_evidence.get('tarot') or {}) if isinstance(tarot_evidence.get('tarot'), dict) else {}).get('cards')
+        tarot_meta = (tarot_evidence.get('tarot') or {}) if isinstance(tarot_evidence.get('tarot'), dict) else {}
+        tarot_cards = tarot_meta.get('cards')
+        combined_interpretation = str(tarot_meta.get('combined_interpretation', '') or '').strip()
         if not any(marker in lowered for marker in _CARD_MARKERS) and not tarot_cards:
             issues.append('full_reading_tarot_missing_card_specific_language')
         if not any(marker in lowered for marker in _TAROT_STRUCTURE_MARKERS):
@@ -190,6 +210,23 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
         if isinstance(tarot_cards, list) and tarot_cards:
             if not any(str(card.get('interpretation', '')).strip() for card in tarot_cards if isinstance(card, dict)):
                 issues.append('full_reading_tarot_missing_card_level_interpretation')
+            shallow_cards = 0
+            missing_question_links = 0
+            for card in tarot_cards:
+                if not isinstance(card, dict):
+                    continue
+                interpretation = str(card.get('interpretation', '') or '').strip()
+                question_link = str(card.get('question_link', '') or '').strip()
+                if _is_shallow_interpretation(interpretation):
+                    shallow_cards += 1
+                if not question_link:
+                    missing_question_links += 1
+            if shallow_cards:
+                issues.append('full_reading_tarot_shallow_card_expansion')
+            if missing_question_links == len([card for card in tarot_cards if isinstance(card, dict)]):
+                issues.append('full_reading_tarot_missing_question_link')
+        if combined_interpretation and _is_too_similar(combined_interpretation, tarot_cards[0].get('interpretation', '') if isinstance(tarot_cards, list) and tarot_cards and isinstance(tarot_cards[0], dict) else ''):
+            issues.append('full_reading_tarot_expanded_state_not_meaningfully_richer')
         if _is_too_similar(tarot, synthesis):
             issues.append('full_reading_tarot_synthesis_repetition')
 

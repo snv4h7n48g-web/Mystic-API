@@ -85,7 +85,7 @@ PRODUCT_ROUTES: dict[str, ProductRoute] = {
         full_model_id=_env("MYSTIC_ROUTE_FULL_READING_FULL_MODEL", DEFAULT_ANTHROPIC_TEXT_MODEL),
         fallback_model_id=_env("MYSTIC_ROUTE_FULL_READING_FALLBACK_MODEL", DEFAULT_NOVA_FULL_MODEL),
         preview_max_tokens=900,
-        full_max_tokens=1800,
+        full_max_tokens=2400,
         persona_hint="flagship_mystic",
     ),
     "palm": ProductRoute(

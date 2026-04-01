@@ -35,7 +35,7 @@ For full/core readings, the structure must land as:
 Rules:
 - The three snapshot lines must be short, high-signal, and not duplicates of the body sections.
 - If palm is part of the flow, palm_revelation must clearly state what palm features/signals stood out, what they suggest, and how they relate to the user's question. If the palm contribution is subtle, say so honestly.
-- tarot_message must name the actual cards or spread positions when available, explain what each card contributes, how they interact, and how the spread speaks to the question.
+- tarot_message must name the actual cards or spread positions when available, explain what each card contributes, how they interact, and how the spread speaks to the question. Expanded tarot detail should feel materially richer than a collapsed summary line.
 - signals_agree must synthesise across modalities instead of repeating palm_revelation or tarot_message.
 - Deliver two distinct payoff sections:
   1. what_this_is_asking_of_you

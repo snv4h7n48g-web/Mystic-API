@@ -21,9 +21,56 @@ _LABEL_NEXT_MOVE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_PALM_LABEL_MAP = {
+    'heart_line': 'Heart Line',
+    'heart line': 'Heart Line',
+    'life_line': 'Life Line',
+    'life line': 'Life Line',
+    'head_line': 'Head Line',
+    'head line': 'Head Line',
+    'fate_line': 'Fate Line',
+    'fate line': 'Fate Line',
+    'sun_line': 'Sun Line',
+    'sun line': 'Sun Line',
+    'marriage_line': 'Relationship Line',
+    'marriage line': 'Relationship Line',
+    'palm_shape': 'Palm Shape',
+    'hand_shape': 'Overall Palm Impression',
+    'hand shape': 'Overall Palm Impression',
+    'overall_palm_impression': 'Overall Palm Impression',
+    'mount_of_venus': 'Mount of Venus',
+    'mount_of_moon': 'Mount of Moon',
+}
+_PALM_ICON_MAP = {
+    'Heart Line': 'heart_line',
+    'Life Line': 'life_line',
+    'Head Line': 'head_line',
+    'Fate Line': 'fate_line',
+    'Sun Line': 'sun_line',
+    'Relationship Line': 'relationship_line',
+    'Palm Shape': 'palm_shape',
+    'Overall Palm Impression': 'overall_palm',
+}
+
 
 def _clean(text: str | None) -> str:
     return (text or '').strip()
+
+
+def _humanize_label(label: str) -> str:
+    cleaned = _clean(label)
+    if not cleaned:
+        return ''
+    mapped = _PALM_LABEL_MAP.get(cleaned.casefold())
+    if mapped:
+        return mapped
+    cleaned = cleaned.replace('_', ' ').replace('-', ' ')
+    return ' '.join(part.capitalize() if part.lower() not in {'of', 'and'} else part.lower() for part in cleaned.split())
+
+
+def _icon_key_for_label(label: str) -> str:
+    pretty = _humanize_label(label)
+    return _PALM_ICON_MAP.get(pretty, pretty.casefold().replace(' ', '_')) if pretty else 'palm_signal'
 
 
 def _split_legacy_guidance(guidance: str) -> tuple[str, str]:
@@ -74,8 +121,14 @@ def _tarot_cards(tarot_payload: dict | None) -> list[dict]:
         name = _clean(card.get('card'))
         position = _clean(card.get('position'))
         meaning = _clean(card.get('meaning') or card.get('interpretation') or card.get('summary'))
+        question_link = _clean(card.get('question_link') or card.get('how_it_relates') or card.get('relevance'))
         if name:
-            parsed.append({'card': name, 'position': position, 'interpretation': meaning})
+            parsed.append({
+                'card': name,
+                'position': position,
+                'interpretation': meaning,
+                'question_link': question_link,
+            })
     return parsed
 
 
@@ -93,15 +146,20 @@ def _palm_signals(palm_features: list[dict] | None) -> list[dict]:
     for feature in palm_features or []:
         if not isinstance(feature, dict):
             continue
-        label = _clean(feature.get('label') or feature.get('feature') or feature.get('name') or feature.get('type'))
-        value = _clean(feature.get('value') or feature.get('description') or feature.get('reading') or feature.get('summary'))
+        raw_label = _clean(feature.get('label') or feature.get('feature') or feature.get('name') or feature.get('type'))
+        pretty_label = _humanize_label(raw_label)
+        value = _clean(feature.get('value') or feature.get('attribute') or feature.get('state') or feature.get('description') or feature.get('reading') or feature.get('summary'))
         relevance = _clean(feature.get('relevance') or feature.get('question_relevance') or feature.get('why_it_matters'))
         confidence = _clean(feature.get('confidence_label') or feature.get('confidence'))
-        if label or value or relevance:
+        if pretty_label or value or relevance:
             summaries.append({
-                'feature': label,
+                'feature': pretty_label,
+                'display_name': pretty_label,
+                'icon_key': _icon_key_for_label(pretty_label or raw_label),
                 'observation': value,
+                'attribute': value,
                 'relevance': relevance,
+                'interpretation': relevance,
                 'confidence': confidence,
             })
     return summaries[:5]
@@ -111,7 +169,7 @@ def _palm_features_summary(palm_features: list[dict] | None) -> list[str]:
     summaries: list[str] = []
     for signal in _palm_signals(palm_features):
         parts = [
-            signal.get('feature', ''),
+            signal.get('display_name', '') or signal.get('feature', ''),
             signal.get('observation', ''),
             f"confidence: {signal['confidence']}" if signal.get('confidence') else '',
         ]
@@ -236,12 +294,12 @@ def build_full_reading_payload(
         if palm_feature_summaries:
             palm_revelation = 'Palm signals that stood out: ' + '; '.join(palm_feature_summaries)
             if question:
-                palm_revelation += f". In relation to your question, these features point toward how you are carrying this pattern rather than promising fixed certainty."
+                palm_revelation += f'. In relation to your question, these features point toward how you are carrying this pattern rather than promising fixed certainty.'
         else:
             palm_revelation = 'Your palm adds a subtle layer here rather than a dramatic override. The visible hand signals are suggestive, not absolute, so this reading treats palm as supporting evidence instead of forced precision.'
 
     if tarot_cards_summary and tarot_cards_summary.casefold() not in tarot_message.casefold():
-        tarot_message = f"Cards in view: {tarot_cards_summary}. {tarot_message}".strip()
+        tarot_message = f'Cards in view: {tarot_cards_summary}. {tarot_message}'.strip()
 
     sections = [
         _build_section(
