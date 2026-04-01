@@ -63,32 +63,59 @@ def _split_legacy_guidance(guidance: str) -> tuple[str, str]:
     return cleaned, ''
 
 
-def _tarot_cards_summary(tarot_payload: dict | None) -> str:
+def _tarot_cards(tarot_payload: dict | None) -> list[dict]:
     cards = tarot_payload.get('cards') if isinstance(tarot_payload, dict) else None
-    if not isinstance(cards, list) or not cards:
-        return ''
-    labels = []
+    parsed: list[dict] = []
+    if not isinstance(cards, list):
+        return parsed
     for card in cards:
         if not isinstance(card, dict):
             continue
         name = _clean(card.get('card'))
         position = _clean(card.get('position'))
-        if name and position:
-            labels.append(f"{name} ({position})")
-        elif name:
-            labels.append(name)
+        meaning = _clean(card.get('meaning') or card.get('interpretation') or card.get('summary'))
+        if name:
+            parsed.append({'card': name, 'position': position, 'interpretation': meaning})
+    return parsed
+
+
+def _tarot_cards_summary(tarot_payload: dict | None) -> str:
+    labels = []
+    for card in _tarot_cards(tarot_payload):
+        name = card['card']
+        position = card['position']
+        labels.append(f"{name} ({position})" if position else name)
     return ', '.join(labels)
 
 
-def _palm_features_summary(palm_features: list[dict] | None) -> list[str]:
-    summaries: list[str] = []
+def _palm_signals(palm_features: list[dict] | None) -> list[dict]:
+    summaries: list[dict] = []
     for feature in palm_features or []:
         if not isinstance(feature, dict):
             continue
         label = _clean(feature.get('label') or feature.get('feature') or feature.get('name') or feature.get('type'))
         value = _clean(feature.get('value') or feature.get('description') or feature.get('reading') or feature.get('summary'))
+        relevance = _clean(feature.get('relevance') or feature.get('question_relevance') or feature.get('why_it_matters'))
         confidence = _clean(feature.get('confidence_label') or feature.get('confidence'))
-        parts = [part for part in [label, value, f'confidence: {confidence}' if confidence else ''] if part]
+        if label or value or relevance:
+            summaries.append({
+                'feature': label,
+                'observation': value,
+                'relevance': relevance,
+                'confidence': confidence,
+            })
+    return summaries[:5]
+
+
+def _palm_features_summary(palm_features: list[dict] | None) -> list[str]:
+    summaries: list[str] = []
+    for signal in _palm_signals(palm_features):
+        parts = [
+            signal.get('feature', ''),
+            signal.get('observation', ''),
+            f"confidence: {signal['confidence']}" if signal.get('confidence') else '',
+        ]
+        parts = [part for part in parts if part]
         if parts:
             summaries.append(' — '.join(parts))
     return summaries[:5]
@@ -100,6 +127,73 @@ def _first_sentence(text: str) -> str:
         return ''
     pieces = _SENTENCE_SPLIT_PATTERN.split(cleaned, maxsplit=1)
     return pieces[0].strip() if pieces else cleaned
+
+
+def _remaining_sentences(text: str) -> str:
+    cleaned = _clean(text)
+    if not cleaned:
+        return ''
+    pieces = _SENTENCE_SPLIT_PATTERN.split(cleaned, maxsplit=1)
+    if len(pieces) < 2:
+        return cleaned
+    return pieces[1].strip()
+
+
+def _headline_and_detail(text: str, *, fallback_headline: str) -> tuple[str, str]:
+    cleaned = _clean(text)
+    if not cleaned:
+        return fallback_headline, ''
+    headline = _first_sentence(cleaned)
+    detail = _remaining_sentences(cleaned)
+    if not detail or detail.casefold() == headline.casefold():
+        detail = cleaned
+    if headline.casefold() == detail.casefold() and len(cleaned) > 140:
+        headline = cleaned[:140].rsplit(' ', 1)[0].strip() + '…'
+        detail = cleaned
+    return headline or fallback_headline, detail or cleaned
+
+
+def _build_section(
+    *,
+    section_id: str,
+    title: str,
+    body: str,
+    fallback_headline: str,
+    default_expanded: bool,
+    evidence_title: str | None = None,
+    evidence_items: list[str] | None = None,
+    tarot_cards: list[dict] | None = None,
+    spread: str | None = None,
+    combined_interpretation: str | None = None,
+    palm_signals: list[dict] | None = None,
+) -> dict:
+    headline, detail = _headline_and_detail(body, fallback_headline=fallback_headline)
+    payload = {
+        'id': section_id,
+        'title': title,
+        'text': detail or body or headline,
+        'headline': headline,
+        'detail': detail or body,
+        'default_expanded': default_expanded,
+    }
+    evidence_items = [item for item in (evidence_items or []) if _clean(item)]
+    evidence: dict[str, object] = {}
+    if evidence_title and evidence_items:
+        evidence['title'] = evidence_title
+        evidence['items'] = evidence_items
+    if tarot_cards:
+        evidence['tarot'] = {
+            'spread': _clean(spread),
+            'cards': tarot_cards,
+            'combined_interpretation': _clean(combined_interpretation),
+        }
+    if palm_signals:
+        evidence['palm'] = {
+            'signals': palm_signals,
+        }
+    if evidence:
+        payload['evidence'] = evidence
+    return payload
 
 
 def build_full_reading_payload(
@@ -131,7 +225,10 @@ def build_full_reading_payload(
         'best_next_move': _clean(normalized.snapshot_best_next_move) or _first_sentence(next_move or normalized.practical_guidance),
     }
 
-    tarot_cards = _tarot_cards_summary(tarot_payload)
+    tarot_cards = _tarot_cards(tarot_payload)
+    tarot_cards_summary = _tarot_cards_summary(tarot_payload)
+    tarot_spread = _clean((tarot_payload or {}).get('spread') if isinstance(tarot_payload, dict) else '')
+    palm_signals = _palm_signals(palm_features)
     palm_feature_summaries = _palm_features_summary(palm_features)
     include_palm_section = include_palm or bool(palm_feature_summaries) or bool(palm_revelation)
 
@@ -143,24 +240,76 @@ def build_full_reading_payload(
         else:
             palm_revelation = 'Your palm adds a subtle layer here rather than a dramatic override. The visible hand signals are suggestive, not absolute, so this reading treats palm as supporting evidence instead of forced precision.'
 
-    if tarot_cards and tarot_cards.casefold() not in tarot_message.casefold():
-        tarot_message = f"Cards in view: {tarot_cards}. {tarot_message}".strip()
+    if tarot_cards_summary and tarot_cards_summary.casefold() not in tarot_message.casefold():
+        tarot_message = f"Cards in view: {tarot_cards_summary}. {tarot_message}".strip()
 
     sections = [
-        {'id': 'reading_opening', 'title': 'OPENING', 'text': opening},
+        _build_section(
+            section_id='reading_opening',
+            title='OPENING',
+            body=opening,
+            fallback_headline=snapshot['core_theme'] or 'A meaningful pattern is taking shape.',
+            default_expanded=True,
+        ),
     ]
     if include_palm_section:
-        sections.append({'id': 'palm_revelation', 'title': 'WHAT YOUR PALM REVEALS', 'text': palm_revelation})
+        sections.append(
+            _build_section(
+                section_id='palm_revelation',
+                title='WHAT YOUR PALM REVEALS',
+                body=palm_revelation,
+                fallback_headline='Your palm shows how this question is being carried in your system.',
+                default_expanded=False,
+                evidence_title='Palm signals',
+                evidence_items=palm_feature_summaries,
+                palm_signals=palm_signals,
+            )
+        )
     sections.extend([
-        {'id': 'tarot_message', 'title': 'WHAT THE CARDS ARE SAYING', 'text': tarot_message},
-        {'id': 'signals_agree', 'title': 'WHERE THESE SIGNALS AGREE', 'text': synthesis},
-        {'id': 'what_this_is_asking_of_you', 'title': 'WHAT THIS IS ASKING OF YOU', 'text': asking},
-        {'id': 'your_next_move', 'title': 'YOUR NEXT MOVE', 'text': next_move},
-        {'id': 'next_return_invitation', 'title': 'RETURN LINE', 'text': normalized.next_return_invitation},
+        _build_section(
+            section_id='tarot_message',
+            title='WHAT THE CARDS ARE SAYING',
+            body=tarot_message,
+            fallback_headline='The cards are concentrating the emotional pattern into something readable.',
+            default_expanded=True,
+            evidence_title='Cards in this spread',
+            evidence_items=[tarot_cards_summary] if tarot_cards_summary else [],
+            tarot_cards=tarot_cards,
+            spread=tarot_spread,
+            combined_interpretation=tarot_message,
+        ),
+        _build_section(
+            section_id='signals_agree',
+            title='WHERE THESE SIGNALS AGREE',
+            body=synthesis,
+            fallback_headline='The strongest overlap is the pattern you can no longer sidestep.',
+            default_expanded=False,
+        ),
+        _build_section(
+            section_id='what_this_is_asking_of_you',
+            title='WHAT THIS IS ASKING OF YOU',
+            body=asking,
+            fallback_headline='The inner ask is more precise than comfort usually allows.',
+            default_expanded=False,
+        ),
+        _build_section(
+            section_id='your_next_move',
+            title='YOUR NEXT MOVE',
+            body=next_move,
+            fallback_headline=snapshot['best_next_move'] or 'Take the smallest decisive step that changes the pattern.',
+            default_expanded=True,
+        ),
+        _build_section(
+            section_id='next_return_invitation',
+            title='RETURN LINE',
+            body=normalized.next_return_invitation,
+            fallback_headline='Return when the pattern has had time to move.',
+            default_expanded=False,
+        ),
     ])
 
-    sections = [section for section in sections if _clean(section['text'])]
-    full_text = '\n\n'.join(section['text'] for section in sections if section['text'])
+    sections = [section for section in sections if _clean(str(section.get('text', '')))]
+    full_text = '\n\n'.join(str(section['text']) for section in sections if section['text'])
 
     return {
         'snapshot': snapshot,
@@ -178,11 +327,21 @@ def build_full_reading_payload(
             'content_contract': content_contract or {},
             'modalities': {
                 'includes_palm': include_palm_section,
-                'includes_tarot': bool(tarot_cards or tarot_message),
+                'includes_tarot': bool(tarot_cards_summary or tarot_message),
             },
             'evidence': {
-                'tarot_cards': tarot_cards,
+                'tarot_cards': tarot_cards_summary,
                 'palm_features': palm_feature_summaries,
+                'tarot': {
+                    'spread': tarot_spread,
+                    'cards': tarot_cards,
+                    'combined_interpretation': tarot_message,
+                },
+                'palm': {
+                    'signals': palm_signals,
+                    'question_relevance': _clean(question),
+                    'interpretation': palm_revelation,
+                },
             },
             'payoff_contract': {
                 'what_this_is_asking_of_you': asking,

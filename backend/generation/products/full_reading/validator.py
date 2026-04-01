@@ -20,13 +20,21 @@ _CARD_MARKERS = [
 ]
 _PALM_MARKERS = ['palm', 'life line', 'heart line', 'head line', 'fate line', 'mount', 'thumb', 'finger', 'hand shape', 'texture']
 _TAROT_STRUCTURE_MARKERS = ['card', 'cards', 'spread', 'position', 'together', 'interaction', 'interact']
+_ACTION_MARKERS = ['choose', 'send', 'ask', 'name', 'make', 'begin', 'start', 'stop', 'schedule', 'say', 'write', 'set', 'clear']
 
 
 def _text_for(sections: list[dict], *ids: str) -> str:
     for section in sections:
         if section.get('id') in ids:
-            return str(section.get('text', '') or '').strip()
+            return str(section.get('detail') or section.get('text', '') or '').strip()
     return ''
+
+
+def _section_for(sections: list[dict], *ids: str) -> dict:
+    for section in sections:
+        if section.get('id') in ids:
+            return section
+    return {}
 
 
 def _looks_stubbed(text: str) -> bool:
@@ -56,19 +64,17 @@ def _first_sentence(text: str) -> str:
     return parts[0].strip() if parts else ''
 
 
-def _heading_restate_issue(section_id: str, text: str) -> str | None:
-    pieces = [piece.strip() for piece in re.split(r'[\n:—-]+', text, maxsplit=1) if piece.strip()]
-    if len(pieces) < 2:
+def _heading_restate_issue(section_id: str, headline: str, detail: str) -> str | None:
+    normalized_head = _normalize_for_compare(headline)
+    normalized_body = _normalize_for_compare(detail)
+    if not normalized_head or not normalized_body:
         return None
-    head, body = pieces[0], pieces[1]
-    normalized_head = _normalize_for_compare(head)
-    normalized_body = _normalize_for_compare(body)
-    if normalized_head and normalized_head == normalized_body:
+    if normalized_head == normalized_body:
         return f'full_reading_heading_body_repetition:{section_id}'
-    if normalized_head and (normalized_body.startswith(normalized_head) or normalized_head.startswith(normalized_body)):
+    if normalized_body.startswith(normalized_head) or normalized_head.startswith(normalized_body):
         return f'full_reading_heading_body_repetition:{section_id}'
-    head_tokens = set(_content_tokens(head))
-    body_tokens = set(_content_tokens(body))
+    head_tokens = set(_content_tokens(headline))
+    body_tokens = set(_content_tokens(detail))
     if head_tokens and len(head_tokens & body_tokens) >= max(2, len(head_tokens)):
         return f'full_reading_heading_body_repetition:{section_id}'
     return None
@@ -94,6 +100,13 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
     metadata = payload.get('metadata') if isinstance(payload.get('metadata'), dict) else {}
     snapshot = payload.get('snapshot') if isinstance(payload.get('snapshot'), dict) else {}
     include_palm = metadata.get('includes_palm') is True or (metadata.get('modalities') or {}).get('includes_palm') is True
+
+    asking_section = _section_for(sections, 'what_this_is_asking_of_you')
+    next_move_section = _section_for(sections, 'your_next_move')
+    palm_section = _section_for(sections, 'palm_revelation', 'palm_insight')
+    tarot_section = _section_for(sections, 'tarot_message', 'tarot_narrative')
+    opening_section = _section_for(sections, 'reading_opening', 'opening_hook', 'opening_invocation')
+    synthesis_section = _section_for(sections, 'signals_agree', 'integrated_synthesis', 'current_pattern')
 
     asking = _text_for(sections, 'what_this_is_asking_of_you')
     next_move = _text_for(sections, 'your_next_move')
@@ -145,6 +158,8 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
             issues.append('full_reading_stub_next_move_section')
         elif len(next_move) < 60:
             issues.append('full_reading_vague_next_move_section')
+        if not any(marker in next_move.casefold() for marker in _ACTION_MARKERS):
+            issues.append('full_reading_next_move_missing_action')
 
     if asking and next_move:
         normalized_asking = _normalize_for_compare(asking)
@@ -158,15 +173,23 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
 
     if include_palm and palm:
         lowered = palm.casefold()
-        if not any(marker in lowered for marker in _PALM_MARKERS):
+        palm_evidence = palm_section.get('evidence') if isinstance(palm_section.get('evidence'), dict) else {}
+        palm_signals = ((palm_evidence.get('palm') or {}) if isinstance(palm_evidence.get('palm'), dict) else {}).get('signals')
+        evidence_items = palm_evidence.get('items') if isinstance(palm_evidence.get('items'), list) else []
+        if not any(marker in lowered for marker in _PALM_MARKERS) and not palm_signals and not evidence_items:
             issues.append('full_reading_palm_section_missing_feature_evidence')
 
     if tarot:
         lowered = tarot.casefold()
-        if not any(marker in lowered for marker in _CARD_MARKERS):
+        tarot_evidence = tarot_section.get('evidence') if isinstance(tarot_section.get('evidence'), dict) else {}
+        tarot_cards = ((tarot_evidence.get('tarot') or {}) if isinstance(tarot_evidence.get('tarot'), dict) else {}).get('cards')
+        if not any(marker in lowered for marker in _CARD_MARKERS) and not tarot_cards:
             issues.append('full_reading_tarot_missing_card_specific_language')
         if not any(marker in lowered for marker in _TAROT_STRUCTURE_MARKERS):
             issues.append('full_reading_tarot_missing_spread_interpretation')
+        if isinstance(tarot_cards, list) and tarot_cards:
+            if not any(str(card.get('interpretation', '')).strip() for card in tarot_cards if isinstance(card, dict)):
+                issues.append('full_reading_tarot_missing_card_level_interpretation')
         if _is_too_similar(tarot, synthesis):
             issues.append('full_reading_tarot_synthesis_repetition')
 
@@ -196,7 +219,8 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
     stems = []
     for section in sections:
         section_id = str(section.get('id', ''))
-        section_text = str(section.get('text', '') or '').strip()
+        section_text = str(section.get('detail') or section.get('text', '') or '').strip()
+        section_headline = str(section.get('headline') or _first_sentence(section_text) or '').strip()
         if not section_text:
             continue
         first_sentence = _normalize_for_compare(_first_sentence(section_text))
@@ -208,7 +232,7 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
         stem = _leading_stem(section_text)
         if stem:
             stems.append(stem)
-        heading_issue = _heading_restate_issue(section_id, section_text)
+        heading_issue = _heading_restate_issue(section_id, section_headline, section_text)
         if heading_issue:
             issues.append(heading_issue)
 

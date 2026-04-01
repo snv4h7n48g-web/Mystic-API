@@ -79,14 +79,47 @@ def test_full_reading_validator_flags_heading_restatement() -> None:
 def test_full_reading_validator_accepts_real_two_part_payoff() -> None:
     payload = {
         'sections': [
-            {'id': 'what_this_is_asking_of_you', 'text': 'This reading is asking you to stop treating clarity like a luxury and start treating it like a responsibility. The deeper shift here is less about doing more and more about refusing the emotional bargain that keeps you half-committed.'},
-            {'id': 'your_next_move', 'text': 'Make one clean decision in the next twenty-four hours that removes ambiguity from the situation you already know is draining you. Keep the move small enough to complete, but definite enough that your nervous system can feel the difference.'},
+            {'id': 'reading_opening', 'headline': 'A threshold is here.', 'detail': 'The pattern has become impossible to keep abstract, and the reading begins where avoidance stops working.'},
+            {'id': 'tarot_message', 'headline': 'The cards show momentum fighting hesitation.', 'detail': 'The Chariot in the lead position and Two of Swords in tension show momentum fighting hesitation across the spread.'},
+            {'id': 'signals_agree', 'headline': 'Every signal points to clarity arriving before comfort.', 'detail': 'Both the symbolic and emotional signals point to clarity already arriving before comfort catches up.'},
+            {'id': 'what_this_is_asking_of_you', 'headline': 'Treat clarity like responsibility.', 'detail': 'This reading is asking you to stop treating clarity like a luxury and start treating it like a responsibility. The deeper shift here is less about doing more and more about refusing the emotional bargain that keeps you half-committed.'},
+            {'id': 'your_next_move', 'headline': 'Cut the ambiguity within a day.', 'detail': 'Make one clean decision in the next twenty-four hours that removes ambiguity from the situation you already know is draining you. Keep the move small enough to complete, but definite enough that your nervous system can feel the difference.'},
         ]
     }
 
     result = validate_product_payload('full_reading', payload)
 
     assert result.passed is True
+
+
+def test_full_reading_validator_flags_missing_card_level_interpretation_in_layered_evidence() -> None:
+    payload = {
+        'sections': [
+            {'id': 'reading_opening', 'headline': 'A threshold is here.', 'detail': 'A threshold is here, and the pattern is ready to move.'},
+            {
+                'id': 'tarot_message',
+                'headline': 'The cards show movement blocked by avoidance.',
+                'detail': 'The Chariot and Two of Swords sit in tension across the spread positions and show motion fighting hesitation.',
+                'evidence': {
+                    'tarot': {
+                        'spread': 'present / crossing',
+                        'cards': [
+                            {'card': 'The Chariot', 'position': 'present', 'interpretation': ''},
+                            {'card': 'Two of Swords', 'position': 'crossing', 'interpretation': ''},
+                        ],
+                    },
+                },
+            },
+            {'id': 'signals_agree', 'headline': 'Both signals point to overcontrol.', 'detail': 'Both signals point to overcontrol without fully duplicating the tarot section.'},
+            {'id': 'what_this_is_asking_of_you', 'headline': 'Stop waiting for certainty.', 'detail': 'Stop waiting for certainty before you honour what you know.'},
+            {'id': 'your_next_move', 'headline': 'Send the message.', 'detail': 'Send the message tonight and remove one source of ambiguity from the situation.'},
+        ]
+    }
+
+    result = validate_product_payload('full_reading', payload)
+
+    assert result.passed is False
+    assert 'full_reading_tarot_missing_card_level_interpretation' in result.issues
 
 
 def test_full_reading_validator_keeps_legacy_guidance_compatible() -> None:
