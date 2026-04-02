@@ -13,9 +13,6 @@ REQUIRED_KEYS = {
     "opening_hook",
     "current_pattern",
     "emotional_truth",
-    "continuity_callback",
-    "premium_teaser",
-    "theme_tags",
 }
 
 
@@ -50,10 +47,14 @@ def parse_normalized_output(raw_text: str) -> NormalizedMysticOutput:
         what_this_is_asking_of_you=str(payload.get("what_this_is_asking_of_you") or ""),
         your_next_move=str(payload.get("your_next_move") or ""),
         continuity_callback=(
-            None if payload["continuity_callback"] is None else str(payload["continuity_callback"])
+            None
+            if payload.get("continuity_callback") is None
+            else str(payload.get("continuity_callback"))
         ),
         next_return_invitation=str(payload.get("next_return_invitation") or payload.get("premium_teaser") or ""),
-        premium_teaser=None if payload["premium_teaser"] is None else str(payload["premium_teaser"]),
+        premium_teaser=(
+            None if payload.get("premium_teaser") is None else str(payload.get("premium_teaser"))
+        ),
         theme_tags=[str(tag) for tag in theme_tags],
         snapshot_core_theme=str(payload.get("snapshot_core_theme") or ""),
         snapshot_main_tension=str(payload.get("snapshot_main_tension") or ""),
