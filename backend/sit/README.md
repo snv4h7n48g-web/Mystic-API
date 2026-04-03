@@ -45,11 +45,17 @@ Current v3 cases:
 
 ## Current status
 
-SIT v2 is now shipped for its bounded scope.
+SIT v3 is now shipped for its bounded scope.
 
-Shipped commits:
+Shipped commit chain:
 - `4382624` — Add Mystic SIT v1 preview harness
 - `203c867` — Validate combined preview payloads in SIT
+- `293b68e` — Document Mystic SIT v1 handoff
+- `20d8848` — Add SIT release policy
+- `27c8af5` — Cross-link SIT docs
+- `b9a3db2` — Add Mystic SIT v2 coverage
+- `50f8bc2` — Update SIT v2 release policy
+- `34e12ae` — Add Mystic API SIT v3 coverage
 
 See `backend/sit/HANDOFF.md` for the phase handoff and next-step recommendation.
 See `backend/sit/RELEASE_POLICY.md` for release-workflow placement and required checks before shipping.

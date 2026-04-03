@@ -1,161 +1,167 @@
 # Mystic SIT Handoff
 
 ## Current status
-Mystic SIT v1 is now implemented and in a usable state.
+Mystic SIT is now materially established across three layers.
 
-Shipped commits:
+Shipped commit chain:
 - `4382624` — Add Mystic SIT v1 preview harness
 - `203c867` — Validate combined preview payloads in SIT
+- `293b68e` — Document Mystic SIT v1 handoff
+- `20d8848` — Add SIT release policy
+- `27c8af5` — Cross-link SIT docs
+- `b9a3db2` — Add Mystic SIT v2 coverage
+- `50f8bc2` — Update SIT v2 release policy
+- `34e12ae` — Add Mystic API SIT v3 coverage
 
-Related backend stability fix during this phase:
+Related backend stability fix during this broader phase:
 - `0e8481a` — Relax preview parser optional fields
 
-## What SIT v1 covers
-SIT v1 is a bounded, model-in-the-loop backend harness for real Bedrock-backed preview generation.
+## What now exists
 
-### Included
-- harness / runner
-- static fixture helpers
+### SIT v1 — preview model-in-the-loop baseline
+Covers:
+- combined preview
+- compatibility preview
+- static fixtures
 - shared validators
-- combined preview SIT case
-- compatibility preview SIT case
-- JSON + markdown report output
-- focused harness tests
+- JSON + markdown reporting
 
-### Entry point
-Run from `backend/`:
+What it is for:
+- catching parser/schema mismatches in real model output
+- catching preview contract regressions
+- catching model-routing / prompt-path breakage on the preview layer
 
-```bash
-python -m sit.runner
-```
+### SIT v2 — expanded orchestration-level coverage
+Adds:
+- combined full reading
+- daily preview
+- daily full reading
+- tarot solo preview
+- compatibility full reading
+- feng shui preview
 
-Single case:
+What it is for:
+- broader structural validation across major generation flows
+- preview + full reading safety net at the orchestrator level
+- release-critical structural checks on the current product set
 
-```bash
-python -m sit.runner --case combined_preview
-python -m sit.runner --case compatibility_preview
-```
+### SIT v3 — API-level route/persistence/gating layer
+Adds:
+- combined preview API
+- combined full reading API
+- compatibility preview API
+- compatibility full reading API
+- daily preview API
 
-## Implemented files
-- `backend/sit/__init__.py`
-- `backend/sit/runner.py`
-- `backend/sit/fixtures.py`
-- `backend/sit/validators.py`
-- `backend/sit/reports.py`
+What it is for:
+- validating actual FastAPI route behavior
+- validating response envelope wiring
+- validating DB persistence side effects
+- validating purchase/subscription gating behavior
+- catching route-level breakage that v1/v2 cannot see
+
+Important:
+- SIT v3 intentionally uses patched orchestrator responses
+- it is an API-level route/persistence/gating layer, not a real-model layer
+- real-model coverage remains the responsibility of SIT v1/v2
+
+---
+
+## How the layers fit together
+
+### Deterministic tests
+Use for:
+- parser
+- formatter
+- validator
+- unit logic
+
+### SIT v1 + v2
+Use for:
+- real model/model-routing/orchestration confidence
+- contract and payload shape validation
+- preview/full reading generation sanity
+
+### SIT v3
+Use for:
+- API route correctness
+- persistence correctness
+- auth/subscription/purchase gate correctness
+- response envelope correctness
+
+Taken together, this gives Mystic:
+- deterministic backend safety
+- real-model orchestration safety
+- API-level route/persistence safety
+
+---
+
+## Current release workflow recommendation
+See `backend/sit/RELEASE_POLICY.md` for the concrete release policy.
+
+Short version:
+- always run deterministic tests
+- run applicable SIT v2 release-critical cases for prompt/parser/orchestration/model-sensitive changes
+- run manual smoke before release
+- use SIT v3 for route/persistence/gating-sensitive backend work
+
+### Practical use of SIT v3
+SIT v3 is best run when changing:
+- preview/read route handlers
+- auth behavior in route handlers
+- purchase/subscription gate logic
+- DB persistence wiring
+- response envelope construction
+
+---
+
+## Current SIT docs
 - `backend/sit/README.md`
-- `backend/sit/reports/.gitkeep`
-- `backend/tests/test_sit_validators.py`
-- `backend/tests/test_sit_reports.py`
+- `backend/sit/HANDOFF.md`
+- `backend/sit/RELEASE_POLICY.md`
+- `backend/sit/api/README.md`
 
-## Verification completed
-Implementation phase verification reported:
-- `PYTHONPATH=. ./venv/bin/pytest tests/test_sit_validators.py tests/test_sit_reports.py tests/test_orchestration_payload_compatibility.py tests/test_product_routing_and_validators.py`
-- result: passing
-- real runner attempts completed for:
-  - combined preview
-  - compatibility preview
+---
 
-Follow-up fix verification:
-- `PYTHONPATH=. ./venv/bin/pytest tests/test_sit_validators.py tests/test_product_quality_gates.py -q`
-- result: passing
+## What is still not covered
+These are next-phase candidates, not unfinished work inside the current SIT phase.
 
-## What the follow-up fixed
-The initial review correctly identified one meaningful gap:
-- combined preview SIT was not running the product validator, which could create a false green
+1. **API-level daily full reading SIT**
+2. **API-level feng shui full analysis SIT**
+3. **API-level palm/lunar specialist SIT**
+4. **CI/nightly automation**
+5. **cross-run comparison / drift reporting**
+6. **cost/latency trend reporting**
+7. **purchase/entitlement-specific deeper SIT beyond current route gates**
 
-That is now fixed.
+---
 
-SIT v1 now:
-- runs the product validator for combined preview too
-- includes negative combined-preview validator coverage
-- validates `unlock_price` more strictly
-- validates `product_id` as a non-empty string
+## Best next SIT phase
+If continuing, the highest-leverage next move is not “more random cases.”
 
-## What SIT v1 is good for
-Use SIT v1 to catch:
-- parser/schema mismatches in real model output
-- missing required metadata/shape
-- flow-specific preview contract regressions
-- model-routing / prompt-path breakage on the preview surfaces
+### Recommended next phase
+**SIT v4 = targeted API expansion + release grouping refinement**
 
-It is especially useful after:
-- parser changes
-- output-schema changes
-- prompt changes
-- orchestration changes
-- model-routing changes
+Good candidates:
+1. daily full reading API
+2. feng shui full analysis API
+3. one purchase/entitlement-heavy route path beyond current gating checks
+4. cleaner `--group` support in the runner (`preview`, `full`, `api`, `release-critical`)
 
-## What SIT v1 is not yet
-It is not yet:
-- a full release matrix across all flows
-- a CI/nightly system
-- full-reading SIT coverage
-- a DB-backed end-to-end API harness
-- a performance/load harness
+Why this is the best next move:
+- it builds directly on the safety-net shape already established
+- it improves route-level release confidence
+- it avoids premature CI/platform complexity
 
-## Recommended SIT v2
-Best next expansion:
-
-### Add full-reading coverage
-Priority order:
-1. combined full reading
-2. daily preview
-3. daily full reading
-4. tarot solo preview
-5. compatibility full reading
-6. feng shui preview
-
-### Improve reporting
-- explicit warning taxonomy
-- clearer summary of validator issues vs transport failures
-- optional comparison to prior run metadata
-
-### Add release grouping
-- `--group previews`
-- `--group release-critical`
-- `--group daily`
-
-### Optional later
-- nightly automation
-- lightweight artifact retention
-- DB-backed fixture path for API-level SIT
-
-See also: `backend/sit/RELEASE_POLICY.md` for the concrete release policy and no-ship rules.
-
-## Recommended release workflow placement
-
-### Always run on PRs
-- deterministic unit tests
-- parser/formatter/validator tests
-
-### Run SIT v1 when
-- prompts changed
-- parser changed
-- output schema changed
-- orchestration changed
-- model/provider routing changed
-- before release candidates
-
-### Good initial release gate
-Treat these as release-critical:
-- combined preview SIT
-- compatibility preview SIT
-
-If both pass, you have a real model-integration sanity check on the conversion-critical preview layer.
-
-## Suggested next phase
-If continuing SIT work, the highest-leverage next step is:
-
-### SIT v2 = expand to full-reading + daily coverage
-That gives you:
-- preview + reading safety net
-- better coverage of product drift
-- better confidence before model/prompt/backend changes ship
+---
 
 ## Notes for the next agent
-Before extending SIT:
+Before extending SIT again:
 1. read this file
 2. read `backend/sit/README.md`
-3. inspect `4382624` and `203c867`
-4. do not overcomplicate v2 with CI or DB setup unless explicitly requested
-5. preserve the current principle: real model calls, structural assertions, not brittle prose snapshots
+3. read `backend/sit/RELEASE_POLICY.md`
+4. inspect the commit chain from `4382624` through `34e12ae`
+5. preserve the distinction between:
+   - real-model SIT (v1/v2)
+   - API route/persistence SIT (v3)
+6. do not overcomplicate the next phase with CI or infra automation unless explicitly requested
