@@ -27,7 +27,8 @@ Shipped commits:
 - `4382624` — Add Mystic SIT v1 preview harness
 - `203c867` — Validate combined preview payloads in SIT
 
-See `backend/sit/HANDOFF.md` for the phase handoff, next-step recommendation, and release-workflow placement.
+See `backend/sit/HANDOFF.md` for the phase handoff and next-step recommendation.
+See `backend/sit/RELEASE_POLICY.md` for release-workflow placement and required checks before shipping.
 
 ## Run locally
 

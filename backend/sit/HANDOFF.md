@@ -120,6 +120,8 @@ Priority order:
 - lightweight artifact retention
 - DB-backed fixture path for API-level SIT
 
+See also: `backend/sit/RELEASE_POLICY.md` for the concrete release policy and no-ship rules.
+
 ## Recommended release workflow placement
 
 ### Always run on PRs
