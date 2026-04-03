@@ -34,6 +34,21 @@ def _require(payload: dict, key: str, failures: list[str], *, parent: str = "") 
     return container.get(key)
 
 
+def _validate_preview_contract_fields(payload: dict, checks: list[str], hard_failures: list[str]) -> None:
+    unlock_price = _require(payload, "unlock_price", hard_failures)
+    product_id = _require(payload, "product_id", hard_failures)
+
+    if isinstance(unlock_price, dict) and unlock_price.get("currency") and "amount" in unlock_price:
+        checks.append("unlock_price_present")
+    elif unlock_price is not None:
+        hard_failures.append("invalid:unlock_price")
+
+    if isinstance(product_id, str) and product_id.strip():
+        checks.append("product_id_present")
+    elif product_id is not None:
+        hard_failures.append("invalid:product_id")
+
+
 
 def validate_preview_payload(*, case_id: str, product_key: str, payload: dict) -> SitValidationSummary:
     checks: list[str] = []
@@ -54,8 +69,7 @@ def validate_preview_payload(*, case_id: str, product_key: str, payload: dict) -
         else:
             checks.append("preview_meta_complete")
 
-    _require(payload, "unlock_price", hard_failures)
-    _require(payload, "product_id", hard_failures)
+    _validate_preview_contract_fields(payload, checks, hard_failures)
 
     if case_id == "combined_preview":
         if isinstance(payload.get("astrology_facts"), dict):
@@ -81,10 +95,10 @@ def validate_preview_payload(*, case_id: str, product_key: str, payload: dict) -
             hard_failures.append(f"invalid:sections.expected={expected}.actual={section_ids}")
 
     validation = ValidationResult(product_key=product_key, passed=True)
-    if case_id == "compatibility_preview":
+    if case_id in {"combined_preview", "compatibility_preview"}:
         validation = validate_product_payload(product_key, payload)
         for issue in validation.issues:
-            if issue in _COMPAT_WARNING_PREFIXES:
+            if case_id == "compatibility_preview" and issue in _COMPAT_WARNING_PREFIXES:
                 warnings.append(issue)
             else:
                 hard_failures.append(issue)
