@@ -1,12 +1,18 @@
-# Mystic SIT v1
+# Mystic SIT v2
 
-Small additive system-integration test harness for Mystic preview generation.
+Small additive system-integration test harness for Mystic preview and reading generation.
 
 ## Scope
 
-v1 currently covers:
+v2 now covers:
 - combined session preview via `MysticGenerationOrchestrator.build_session_preview_result`
-- compatibility preview via `MysticGenerationOrchestrator.build_compatibility_preview_result`
+- combined full reading via `MysticGenerationOrchestrator.build_session_reading_result`
+- daily preview
+- daily full reading
+- tarot solo preview
+- compatibility preview
+- compatibility full reading
+- feng shui preview
 - static realistic fixtures
 - shared structural / contract / metadata validation
 - JSON + markdown report output
@@ -15,13 +21,14 @@ v1 currently covers:
 
 - CI integration
 - DB-backed setup / teardown
-- full reading SIT coverage
+- feng shui full reading SIT coverage
+- lunar / palm SIT coverage
 - snapshot-style prose assertions
 - retry orchestration for flaky external calls
 
 ## Current status
 
-SIT v1 is now shipped for its bounded scope.
+SIT v2 is now shipped for its bounded scope.
 
 Shipped commits:
 - `4382624` — Add Mystic SIT v1 preview harness
@@ -38,11 +45,15 @@ From `backend/` with the existing virtualenv / AWS Bedrock credentials available
 python -m sit.runner
 ```
 
-Run one case only:
+Run selected cases:
 
 ```bash
 python -m sit.runner --case combined_preview
-python -m sit.runner --case compatibility_preview
+python -m sit.runner --case combined_full_reading
+python -m sit.runner --case daily_preview --case daily_full_reading
+python -m sit.runner --case tarot_solo_preview
+python -m sit.runner --case compatibility_preview --case compatibility_full_reading
+python -m sit.runner --case feng_shui_preview
 ```
 
 Custom report directory:
@@ -61,9 +72,12 @@ Reports are written under `backend/sit/reports/` by default:
 
 The harness checks:
 - transport success or raised exception
-- preview payload structure
+- preview/readings payload structure
 - required metadata fields
 - contract-aligned section ids where applicable
 - existing product validator output
 
-For compatibility preview, transport/parser/schema failures are treated as hard failures. Some softer quality issues can be downgraded to warnings so the run still captures usable output without hiding real breakage.
+Calibration notes:
+- daily preview and tarot preview accept either the current shared preview envelope or future specialized preview formatter shapes
+- daily full reading accepts a contract-aligned subset because the formatter legitimately drops blank optional sections
+- compatibility preview still downgrades a couple of softer relational-quality issues to warnings so the run surfaces usable output without hiding real breakage

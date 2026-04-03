@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -12,7 +12,7 @@ from generation.orchestration import MysticGenerationOrchestrator
 
 from sit.fixtures import get_fixture
 from sit.reports import write_report_files
-from sit.validators import validate_preview_payload
+from sit.validators import validate_preview_payload, validate_reading_payload
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,7 @@ class SitCaseDefinition:
     case_id: str
     product_key: str
     description: str
+    surface: str
     execute: Callable[[MysticGenerationOrchestrator, dict[str, Any]], Any]
 
 
@@ -28,6 +29,69 @@ _CASES: dict[str, SitCaseDefinition] = {
         case_id="combined_preview",
         product_key="full_reading",
         description="Real combined session preview through orchestration.",
+        surface="preview",
+        execute=lambda orchestrator, fx: orchestrator.build_session_preview_result(
+            session=fx["session"],
+            user=fx["user"],
+            astrology_facts=fx["astrology_facts"],
+            tarot_payload=fx["tarot_payload"],
+            unlock_price=fx["unlock_price"],
+            product_id=fx["product_id"],
+            entitlements=fx["entitlements"],
+        ),
+    ),
+    "combined_full_reading": SitCaseDefinition(
+        case_id="combined_full_reading",
+        product_key="full_reading",
+        description="Real combined full reading through orchestration.",
+        surface="full",
+        execute=lambda orchestrator, fx: orchestrator.build_session_reading_result(
+            session=fx["session"],
+            user=fx["user"],
+            astrology_facts=fx["astrology_facts"],
+            tarot_payload=fx["tarot_payload"],
+            palm_features=fx["palm_features"],
+            include_palm=fx["include_palm"],
+            deep_access=fx["deep_access"],
+            content_contract=fx["content_contract"],
+        ),
+    ),
+    "daily_preview": SitCaseDefinition(
+        case_id="daily_preview",
+        product_key="daily",
+        description="Real daily preview through orchestration.",
+        surface="preview",
+        execute=lambda orchestrator, fx: orchestrator.build_session_preview_result(
+            session=fx["session"],
+            user=fx["user"],
+            astrology_facts=fx["astrology_facts"],
+            tarot_payload=fx["tarot_payload"],
+            unlock_price=fx["unlock_price"],
+            product_id=fx["product_id"],
+            entitlements=fx["entitlements"],
+        ),
+    ),
+    "daily_full_reading": SitCaseDefinition(
+        case_id="daily_full_reading",
+        product_key="daily",
+        description="Real daily full reading through orchestration.",
+        surface="full",
+        execute=lambda orchestrator, fx: orchestrator.build_session_reading_result(
+            session=fx["session"],
+            user=fx["user"],
+            astrology_facts=fx["astrology_facts"],
+            tarot_payload=fx["tarot_payload"],
+            palm_features=[],
+            include_palm=False,
+            deep_access=fx["deep_access"],
+            content_contract=fx["content_contract"],
+        ),
+    ),
+    "tarot_solo_preview": SitCaseDefinition(
+        case_id="tarot_solo_preview",
+        product_key="tarot",
+        description="Real tarot solo preview through orchestration.",
+        surface="preview",
         execute=lambda orchestrator, fx: orchestrator.build_session_preview_result(
             session=fx["session"],
             user=fx["user"],
@@ -42,6 +106,7 @@ _CASES: dict[str, SitCaseDefinition] = {
         case_id="compatibility_preview",
         product_key="compatibility",
         description="Real compatibility preview through orchestration.",
+        surface="preview",
         execute=lambda orchestrator, fx: orchestrator.build_compatibility_preview_result(
             compat=fx["compat"],
             user=fx["user"],
@@ -54,6 +119,35 @@ _CASES: dict[str, SitCaseDefinition] = {
             synastry=fx["synastry"],
             zodiac_harmony=fx["zodiac_harmony"],
             entitlements=fx["entitlements"],
+        ),
+    ),
+    "compatibility_full_reading": SitCaseDefinition(
+        case_id="compatibility_full_reading",
+        product_key="compatibility",
+        description="Real compatibility full reading through orchestration.",
+        surface="full",
+        execute=lambda orchestrator, fx: orchestrator.build_compatibility_reading_result(
+            compat=fx["compat"],
+            user=fx["user"],
+            person1=fx["person1"],
+            person2=fx["person2"],
+            chart1=fx["chart1"],
+            chart2=fx["chart2"],
+            synastry=fx["synastry"],
+            zodiac_harmony=fx["zodiac_harmony"],
+        ),
+    ),
+    "feng_shui_preview": SitCaseDefinition(
+        case_id="feng_shui_preview",
+        product_key="feng_shui",
+        description="Real feng shui preview through orchestration.",
+        surface="preview",
+        execute=lambda orchestrator, fx: orchestrator.build_feng_shui_preview_result(
+            analysis=fx["analysis"],
+            user=fx["user"],
+            entitlements=fx["entitlements"],
+            product_id=fx["product_id"],
+            price_amount=fx["price_amount"],
         ),
     ),
 }
@@ -70,16 +164,17 @@ def run_cases(case_ids: list[str]) -> dict[str, Any]:
         try:
             orchestration_result = definition.execute(orchestrator, fixture)
             duration_ms = round((time.perf_counter() - started) * 1000, 2)
-            validation = validate_preview_payload(
-                case_id=case_id,
-                product_key=definition.product_key,
-                payload=orchestration_result.payload,
+            validation = (
+                validate_preview_payload(case_id=case_id, product_key=definition.product_key, payload=orchestration_result.payload)
+                if definition.surface == "preview"
+                else validate_reading_payload(case_id=case_id, product_key=definition.product_key, payload=orchestration_result.payload)
             )
             results.append(
                 {
                     "case_id": case_id,
                     "description": definition.description,
                     "product_key": definition.product_key,
+                    "surface": definition.surface,
                     "status": validation.status,
                     "duration_ms": duration_ms,
                     "generation": {
@@ -102,6 +197,7 @@ def run_cases(case_ids: list[str]) -> dict[str, Any]:
                     "case_id": case_id,
                     "description": definition.description,
                     "product_key": definition.product_key,
+                    "surface": definition.surface,
                     "status": "failed",
                     "duration_ms": duration_ms,
                     "error": f"{type(exc).__name__}: {exc}",
@@ -123,21 +219,21 @@ def run_cases(case_ids: list[str]) -> dict[str, Any]:
     }
 
 
-
 def _payload_excerpt(payload: dict[str, Any]) -> dict[str, Any]:
-    excerpt = {key: payload.get(key) for key in ("flow_type", "product_id", "teaser_text") if key in payload}
+    excerpt = {key: payload.get(key) for key in ("flow_type", "product_id", "teaser_text", "analysis_type") if key in payload}
     if isinstance(payload.get("sections"), list):
         excerpt["section_ids"] = [section.get("id") for section in payload["sections"] if isinstance(section, dict)]
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    if metadata.get("flow_type"):
+        excerpt["metadata_flow_type"] = metadata.get("flow_type")
     return excerpt
 
 
-
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run Mystic SIT v1 preview checks.")
+    parser = argparse.ArgumentParser(description="Run Mystic SIT v2 preview and reading checks.")
     parser.add_argument("--case", action="append", dest="cases", choices=sorted(_CASES.keys()), help="Case id to run. Repeat for multiple cases.")
     parser.add_argument("--output-dir", default=str(Path(__file__).resolve().parent / "reports"), help="Directory for JSON and markdown reports.")
     return parser.parse_args()
-
 
 
 def main() -> int:

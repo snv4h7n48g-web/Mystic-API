@@ -11,6 +11,7 @@ def test_report_writer_emits_json_and_markdown(tmp_path) -> None:
                 "case_id": "combined_preview",
                 "status": "passed",
                 "product_key": "full_reading",
+                "surface": "preview",
                 "duration_ms": 123.4,
                 "generation": {"model_id": "test-model", "persona_id": "premium_mystic", "input_tokens": 10, "output_tokens": 20, "cost_usd": 0.01},
                 "validation": {"checks": ["ok"], "warnings": [], "hard_failures": []},
@@ -22,4 +23,6 @@ def test_report_writer_emits_json_and_markdown(tmp_path) -> None:
 
     assert json_path.exists()
     assert md_path.exists()
-    assert "Mystic SIT v1 Report" in md_path.read_text(encoding="utf-8")
+    markdown = md_path.read_text(encoding="utf-8")
+    assert "Mystic SIT v2 Report" in markdown
+    assert "- Surface: `preview`" in markdown

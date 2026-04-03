@@ -20,7 +20,7 @@ def write_report_files(*, report: dict[str, Any], output_dir: str | Path) -> tup
 
 def _render_markdown(report: dict[str, Any], json_name: str) -> str:
     lines = [
-        "# Mystic SIT v1 Report",
+        "# Mystic SIT v2 Report",
         "",
         f"- Generated at: `{report.get('generated_at')}`",
         f"- Overall status: **{report.get('status')}**",
@@ -37,6 +37,7 @@ def _render_markdown(report: dict[str, Any], json_name: str) -> str:
             "",
             f"- Status: **{case.get('status')}**",
             f"- Product: `{case.get('product_key')}`",
+            f"- Surface: `{case.get('surface')}`",
             f"- Duration: `{case.get('duration_ms')} ms`",
         ])
         generation = case.get("generation") or {}
