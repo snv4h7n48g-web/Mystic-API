@@ -178,6 +178,7 @@ def validate_preview_payload(*, case_id: str, product_key: str, payload: dict) -
             checks.append("tarot_preview_specialized_shape_detected")
         else:
             checks.append("tarot_preview_generic_shape_accepted")
+            checks.append("tarot_product_validator_skipped_for_generic_preview_envelope")
 
     elif case_id == "compatibility_preview":
         _validate_contract_section_ids(payload=payload, product_key=product_key, checks=checks, hard_failures=hard_failures)

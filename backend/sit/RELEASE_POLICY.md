@@ -29,12 +29,16 @@ These are the fast baseline.
 Run real model-in-the-loop System Integration Tests for release-relevant generation paths.
 
 Current SIT status:
-- SIT v1 shipped
-- covers:
+- SIT v2 has landed
+- current case set:
   - `combined_preview`
+  - `combined_full_reading`
+  - `daily_preview`
+  - `daily_full_reading`
+  - `tarot_solo_preview`
   - `compatibility_preview`
-
-Future SIT coverage should expand, but release policy starts with what exists now.
+  - `compatibility_full_reading`
+  - `feng_shui_preview`
 
 ---
 
@@ -69,12 +73,10 @@ Examples:
 
 #### Required
 - deterministic checks
-- **SIT v1 required**
-  - `combined_preview`
-  - `compatibility_preview`
+- **SIT v2 release-critical group required**
 
 #### Release rule
-Do not ship if either SIT case hard-fails.
+Do not ship if any release-critical SIT case hard-fails.
 
 ---
 
@@ -88,7 +90,7 @@ Examples:
 
 #### Required
 - deterministic checks
-- **SIT v1 required**
+- **SIT v2 preview release-critical cases required**
 - manual app smoke on at least one real preview flow
 
 #### Release rule
@@ -103,21 +105,38 @@ Examples:
 - full reading validator
 - palm/tarot evidence payload changes
 
-#### Required now
+#### Required
 - deterministic checks
+- **SIT v2 full-reading release-critical cases required**
 - manual real-flow smoke test
-
-#### Required once SIT v2 exists
-- deterministic checks
-- SIT release-critical group including full reading
 
 ---
 
 ## 3. Current release-critical SIT group
 
-Until SIT v2 lands, the release-critical SIT group is:
+The post-v2 release-critical SIT group is:
 - `combined_preview`
+- `combined_full_reading`
+- `daily_preview`
+- `daily_full_reading`
+- `tarot_solo_preview`
 - `compatibility_preview`
+- `compatibility_full_reading`
+- `feng_shui_preview`
+
+### Preview subset
+Use this subset when the change only affects preview surfaces:
+- `combined_preview`
+- `daily_preview`
+- `tarot_solo_preview`
+- `compatibility_preview`
+- `feng_shui_preview`
+
+### Full-reading subset
+Use this subset when the change only affects full-reading surfaces:
+- `combined_full_reading`
+- `daily_full_reading`
+- `compatibility_full_reading`
 
 ### Pass criteria
 A release-critical SIT case passes if:
@@ -147,7 +166,7 @@ Even with SIT, require manual smoke for any externally visible release.
 ### Minimum manual smoke
 #### Preview-affecting release
 - 1 combined preview in app
-- 1 compatibility preview in app
+- 1 targeted affected preview flow in app
 
 #### Reading-affecting release
 - 1 combined preview + unlock + full reading
@@ -164,12 +183,12 @@ Even with SIT, require manual smoke for any externally visible release.
 
 ### For normal backend/model-sensitive releases
 1. run deterministic suite
-2. run SIT release-critical group
+2. run the applicable SIT v2 release-critical group
 3. review SIT markdown/json report
 4. run manual app smoke on affected flows
 5. ship only if:
    - deterministic suite passes
-   - SIT release-critical group passes
+   - applicable release-critical SIT passes
    - manual smoke is clean or known issues are accepted explicitly
 
 ---
@@ -212,31 +231,14 @@ Soft warnings can ship only with deliberate acceptance.
 
 ---
 
-## 8. Expansion policy
-
-### Next planned upgrade
-SIT v2 should add:
-- `combined_full`
-- `daily_preview`
-- `daily_full`
-- `tarot_solo_preview`
-- `compatibility_full`
-- `feng_shui_preview`
-
-When SIT v2 lands, update the release-critical group accordingly.
-
----
-
-## 9. Current policy summary
+## 8. Policy summary
 
 ### Must run on risky backend/model changes
 - deterministic tests
-- SIT v1:
-  - `combined_preview`
-  - `compatibility_preview`
+- applicable SIT v2 release-critical cases
 
 ### Must run before release
 - manual smoke on the affected flow(s)
 
-### Current no-ship condition
-- any hard SIT failure in the release-critical group
+### No-ship condition
+- any hard SIT failure in the applicable release-critical group

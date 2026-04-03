@@ -156,6 +156,7 @@ def test_tarot_preview_validator_accepts_generic_preview_envelope_without_full_t
 
     assert result.status == "passed"
     assert "tarot_preview_generic_shape_accepted" in result.checks
+    assert "tarot_product_validator_skipped_for_generic_preview_envelope" in result.checks
     assert result.validator["issues"] == []
 
 
