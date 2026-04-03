@@ -19,6 +19,16 @@ v1 currently covers:
 - snapshot-style prose assertions
 - retry orchestration for flaky external calls
 
+## Current status
+
+SIT v1 is now shipped for its bounded scope.
+
+Shipped commits:
+- `4382624` — Add Mystic SIT v1 preview harness
+- `203c867` — Validate combined preview payloads in SIT
+
+See `backend/sit/HANDOFF.md` for the phase handoff, next-step recommendation, and release-workflow placement.
+
 ## Run locally
 
 From `backend/` with the existing virtualenv / AWS Bedrock credentials available:
