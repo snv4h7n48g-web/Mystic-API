@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -230,14 +232,18 @@ def _payload_excerpt(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run Mystic SIT v2 preview and reading checks.")
+    parser = argparse.ArgumentParser(description="Run Mystic SIT checks.")
     parser.add_argument("--case", action="append", dest="cases", choices=sorted(_CASES.keys()), help="Case id to run. Repeat for multiple cases.")
     parser.add_argument("--output-dir", default=str(Path(__file__).resolve().parent / "reports"), help="Directory for JSON and markdown reports.")
+    parser.add_argument("--api-v3", action="store_true", help="Run the API-level SIT v3 pytest suite under sit/api/.")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if args.api_v3:
+        return subprocess.call([sys.executable, "-m", "pytest", "sit/api/test_api_sit_v3.py", "-q"])
+
     case_ids = args.cases or list(_CASES.keys())
     report = run_cases(case_ids)
     json_path, md_path = write_report_files(report=report, output_dir=args.output_dir)

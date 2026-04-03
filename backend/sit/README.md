@@ -1,10 +1,12 @@
-# Mystic SIT v2
+# Mystic SIT
 
 Small additive system-integration test harness for Mystic preview and reading generation.
 
 ## Scope
 
-v2 now covers:
+### v2 orchestration SIT
+
+v2 covers:
 - combined session preview via `MysticGenerationOrchestrator.build_session_preview_result`
 - combined full reading via `MysticGenerationOrchestrator.build_session_reading_result`
 - daily preview
@@ -17,12 +19,27 @@ v2 now covers:
 - shared structural / contract / metadata validation
 - JSON + markdown report output
 
+### v3 API SIT
+
+v3 adds a thin API-level SIT suite under `backend/sit/api/` that uses:
+- real FastAPI routes via `TestClient`
+- real Postgres persistence assertions against a dedicated local test database
+- patched orchestrator outputs instead of live Bedrock/model calls
+- release-critical gating checks for purchase/subscription flows
+
+Current v3 cases:
+- combined preview API
+- combined full reading API
+- compatibility preview API
+- compatibility full reading API
+- daily preview API
+
 ## What it does not do yet
 
 - CI integration
-- DB-backed setup / teardown
+- real-model / Bedrock SIT
 - feng shui full reading SIT coverage
-- lunar / palm SIT coverage
+- lunar / palm API SIT coverage
 - snapshot-style prose assertions
 - retry orchestration for flaky external calls
 
@@ -39,7 +56,9 @@ See `backend/sit/RELEASE_POLICY.md` for release-workflow placement and required 
 
 ## Run locally
 
-From `backend/` with the existing virtualenv / AWS Bedrock credentials available:
+From `backend/` with the existing virtualenv available:
+
+### v2 orchestration SIT
 
 ```bash
 python -m sit.runner
@@ -60,6 +79,16 @@ Custom report directory:
 
 ```bash
 python -m sit.runner --output-dir ./sit/reports-local
+```
+
+### v3 API SIT
+
+This suite expects local Postgres access and creates/uses a dedicated test database: `mystic_sit_api`.
+
+```bash
+pytest sit/api/test_api_sit_v3.py -q
+# or
+python -m sit.runner --api-v3
 ```
 
 ## Output
