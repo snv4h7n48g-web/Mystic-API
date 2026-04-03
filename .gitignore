@@ -61,6 +61,9 @@ Thumbs.db
 .coverage
 htmlcov/
 .tox/
+backend/sit/reports/*.json
+backend/sit/reports/*.md
+!backend/sit/reports/.gitkeep
 
 # Distribution / packaging
 .Python
