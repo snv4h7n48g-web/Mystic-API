@@ -11,6 +11,18 @@ CARD_MARKERS = [
     "seven of", "eight of", "nine of", "ten of", "page of", "knight of", "queen of", "king of",
 ]
 SYMBOLIC_MARKERS = ["card", "cards", "spread", "symbol", "symbolism", "arcana", "position"]
+ACTION_MARKERS = [
+    "choose", "send", "ask", "name", "make", "begin", "start", "stop", "schedule", "say", "write", "set", "clear",
+    "take", "pause", "notice", "commit", "decline", "reach out", "protect",
+]
+_GENERIC_FILLER_MARKERS = [
+    "trust the universe",
+    "the universe has your back",
+    "everything happens for a reason",
+    "your soul knows",
+    "align with your highest self",
+    "divine timing",
+]
 _WORD_RE = re.compile(r"[a-z0-9']+")
 _STOPWORDS = {
     'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for', 'from', 'if', 'in', 'into', 'is', 'it', 'its',
@@ -46,11 +58,25 @@ def _is_too_similar(a: str, b: str) -> bool:
 
 
 
+def _word_count(text: str) -> int:
+    return len(_content_tokens(text))
+
+
+
+def _has_actionable_guidance(text: str) -> bool:
+    lowered = (text or '').casefold()
+    if any(marker in lowered for marker in ACTION_MARKERS):
+        return True
+    return bool(re.search(r'\b(?:try|let|keep|notice|consider|avoid|protect|write|name|ask|choose|take)\b', lowered))
+
+
+
 def validate_tarot_payload(payload: dict) -> list[str]:
     sections = payload.get("sections", [])
     issues: list[str] = []
     opening = _text_for(sections, "opening_invocation")
     narrative = _text_for(sections, "tarot_narrative")
+    synthesis = _text_for(sections, "integrated_synthesis", "current_pattern")
     guidance = _text_for(sections, "reflective_guidance", "practical_guidance")
 
     if not narrative.strip():
@@ -61,10 +87,27 @@ def validate_tarot_payload(payload: dict) -> list[str]:
         issues.append("tarot_missing_guidance_section")
 
     lowered = narrative.casefold()
+    card_hits = sum(1 for marker in CARD_MARKERS if marker in lowered)
+    structure_hits = sum(1 for marker in SYMBOLIC_MARKERS if marker in lowered)
+
     if not any(marker in lowered for marker in CARD_MARKERS):
         issues.append("tarot_missing_card_specific_language")
     if not any(marker in lowered for marker in SYMBOLIC_MARKERS):
         issues.append("tarot_missing_symbolic_structure")
+    if _word_count(narrative) < 12:
+        issues.append("tarot_narrative_too_shallow")
+    if card_hits < 2 and structure_hits < 2:
+        issues.append("tarot_narrative_under_grounded")
+    if any(marker in guidance.casefold() for marker in _GENERIC_FILLER_MARKERS):
+        issues.append("tarot_guidance_generic_filler")
+    if guidance and _word_count(guidance) < 10:
+        issues.append("tarot_guidance_too_shallow")
+    if guidance and not _has_actionable_guidance(guidance):
+        issues.append("tarot_guidance_missing_action")
     if opening and _is_too_similar(opening, narrative):
         issues.append("tarot_opening_narrative_repetition")
+    if synthesis and _is_too_similar(narrative, synthesis):
+        issues.append("tarot_narrative_synthesis_repetition")
+    if guidance and synthesis and _is_too_similar(guidance, synthesis):
+        issues.append("tarot_guidance_synthesis_repetition")
     return issues

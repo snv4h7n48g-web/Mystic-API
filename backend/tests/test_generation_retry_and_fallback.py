@@ -106,7 +106,7 @@ def test_retry_correction_applies_once_and_returns_corrected_payload(monkeypatch
                 product_key="tarot",
                 passed=False,
                 issues=["tarot_missing_card_specific_language"],
-                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards or spread logic, explain symbolism, and synthesise the cards into guidance.",
+                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
             ),
             ValidationResult(product_key="tarot", passed=True, issues=[]),
         ]
@@ -126,7 +126,7 @@ def test_retry_correction_applies_once_and_returns_corrected_payload(monkeypatch
 
     assert orchestrator.retry_instructions == [
         None,
-        "Correct the output into a card-led tarot reading. Name the actual cards or spread logic, explain symbolism, and synthesise the cards into guidance.",
+        "Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
     ]
     assert len(validation_spy.calls) == 2
     assert result.payload["sections"][0]["text"] == "The Hermit opens the spread."
@@ -163,13 +163,13 @@ def test_exhausted_retry_returns_best_available_full_payload_with_validation_met
                 product_key="tarot",
                 passed=False,
                 issues=["tarot_missing_card_specific_language"],
-                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards or spread logic, explain symbolism, and synthesise the cards into guidance.",
+                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
             ),
             ValidationResult(
                 product_key="tarot",
                 passed=False,
                 issues=["tarot_missing_card_specific_language", "tarot_missing_spread_context"],
-                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards or spread logic, explain symbolism, and synthesise the cards into guidance.",
+                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
             ),
         ]
     )
@@ -224,13 +224,13 @@ def test_exhausted_retry_preview_payload_does_not_leak_validation_metadata(monke
                 product_key="tarot",
                 passed=False,
                 issues=["tarot_missing_card_specific_language"],
-                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards or spread logic, explain symbolism, and synthesise the cards into guidance.",
+                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
             ),
             ValidationResult(
                 product_key="tarot",
                 passed=False,
                 issues=["tarot_missing_card_specific_language", "tarot_missing_spread_context"],
-                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards or spread logic, explain symbolism, and synthesise the cards into guidance.",
+                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
             ),
         ]
     )

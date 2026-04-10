@@ -52,7 +52,7 @@ def test_quality_gate_retries_once_then_passes() -> None:
             ),
             _response(
                 opening="The Hermit opens the spread.",
-                current="The Hermit in the guidance position asks for retreat; the card's symbolism points to discernment before action.",
+                current="The Hermit in the guidance position asks for retreat, while the spread's slower rhythm turns that retreat into discernment before action and shows why silence clarifies the next choice.",
                 emotional="The spread shows that solitude is a tool, not a wall.",
                 guidance="Use the card's lantern image as your cue to move one clear step at a time.",
                 closing="Return when the next card is ready.",
@@ -71,7 +71,7 @@ def test_quality_gate_retries_once_then_passes() -> None:
         payload_builder_kwargs={},
     )
 
-    assert orchestrator.calls == [None, "Correct the output into a card-led tarot reading. Name the actual cards or spread logic, explain symbolism, and synthesise the cards into guidance."]
+    assert orchestrator.calls == [None, "Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler."]
     assert result.payload["metadata"]["validation"]["attempts"] == 2
     assert result.payload["metadata"]["validation"]["valid"] is True
     assert result.input_tokens == 20

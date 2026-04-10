@@ -71,6 +71,7 @@ def test_tarot_validator_requires_card_specific_structure() -> None:
     invalid = validate_product_payload("tarot", invalid_payload)
     assert invalid.valid is False
     assert invalid.retry_hint is not None
+    assert "tie each claim back to that card/spread evidence" in invalid.retry_hint
     assert "tarot_missing_card_specific_language" in invalid.issues
 
     valid_payload = {
