@@ -5,10 +5,18 @@ def _clean(text: str | None) -> str:
     return ' '.join((text or '').split()).strip()
 
 
+def _first_non_empty(normalized, *field_names: str) -> str:
+    for field_name in field_names:
+        value = _clean(getattr(normalized, field_name, ''))
+        if value:
+            return value
+    return ''
+
+
 def map_tarot_preview(normalized) -> dict:
-    headline = _clean(getattr(normalized, 'opening_hook', ''))
-    narrative = _clean(getattr(normalized, 'current_pattern', ''))
-    guidance = _clean(getattr(normalized, 'practical_guidance', ''))
+    headline = _first_non_empty(normalized, 'reading_opening', 'opening_hook')
+    narrative = _first_non_empty(normalized, 'tarot_message', 'current_pattern')
+    guidance = _first_non_empty(normalized, 'what_this_is_asking_of_you', 'your_next_move', 'practical_guidance')
     closing = _clean(getattr(normalized, 'next_return_invitation', ''))
     return {
         'headline': headline,
@@ -19,10 +27,10 @@ def map_tarot_preview(normalized) -> dict:
 
 
 def map_tarot_reading(normalized) -> dict:
-    opening = _clean(getattr(normalized, 'opening_hook', ''))
-    narrative = _clean(getattr(normalized, 'current_pattern', ''))
-    synthesis = _clean(getattr(normalized, 'emotional_truth', ''))
-    guidance = _clean(getattr(normalized, 'practical_guidance', ''))
+    opening = _first_non_empty(normalized, 'reading_opening', 'opening_hook')
+    narrative = _first_non_empty(normalized, 'tarot_message', 'current_pattern')
+    synthesis = _first_non_empty(normalized, 'signals_agree', 'emotional_truth')
+    guidance = _first_non_empty(normalized, 'what_this_is_asking_of_you', 'your_next_move', 'practical_guidance')
     closing = _clean(getattr(normalized, 'next_return_invitation', ''))
     return {
         'opening_invocation': opening,

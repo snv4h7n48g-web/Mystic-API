@@ -78,7 +78,11 @@ def test_tarot_validator_requires_card_specific_structure() -> None:
             {
                 "id": "tarot_narrative",
                 "text": "The Hermit in the guidance position sets the tone of the spread. This card's symbolism points to retreat, discernment, and a slower answer.",
-            }
+            },
+            {
+                "id": "reflective_guidance",
+                "text": "Take one hour of deliberate solitude before making the next move so the card's quieter instruction can surface.",
+            },
         ]
     }
     valid = validate_product_payload("tarot", valid_payload)
