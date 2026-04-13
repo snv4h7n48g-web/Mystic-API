@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from generation.orchestration import MysticGenerationOrchestrator
 from generation.types import GenerationContext, GenerationMetadata, NormalizedMysticOutput, OrchestrationResult
@@ -43,7 +44,7 @@ class ValidatorSpy:
         return self.results.pop(0)
 
 
-def _response(*, opening: str, current: str, emotional: str, guidance: str, closing: str):
+def _response(*, opening: str, current: str, emotional: str, guidance: str, closing: str, generation_metrics: dict | None = None):
     normalized = NormalizedMysticOutput(
         opening_hook=opening,
         current_pattern=current,
@@ -62,7 +63,14 @@ def _response(*, opening: str, current: str, emotional: str, guidance: str, clos
         theme_tags=["test"],
         headline=opening,
     )
-    result = OrchestrationResult(payload={}, metadata=metadata, input_tokens=10, output_tokens=20, cost_usd=0.5)
+    result = OrchestrationResult(
+        payload={},
+        metadata=metadata,
+        input_tokens=10,
+        output_tokens=20,
+        cost_usd=0.5,
+        generation_metrics=generation_metrics or {},
+    )
     return {"normalized": normalized, "metadata": metadata, "result": result}
 
 
@@ -321,6 +329,84 @@ def test_anthropic_preferred_route_falls_back_to_configured_model(monkeypatch) -
     assert result.generation_metrics["used_fallback_model"] is True
     assert result.generation_metrics["timeout_ms"] == 20000
     assert normalized.opening_hook == "Today starts with clarity."
+
+
+
+def test_generation_timing_summary_is_attached_for_live_triage(monkeypatch, caplog) -> None:
+    from generation.validators import ValidationResult
+
+    orchestrator = StubRetryOrchestrator(
+        responses=[
+            _response(
+                opening="Today starts with clarity.",
+                current="The day is asking for one direct move, not five half-steps.",
+                emotional="You already know what needs trimming.",
+                guidance="Pick the task that clears the most friction before lunch.",
+                closing="Come back tomorrow for the next pulse.",
+                generation_metrics={
+                    "attempt_model": "model-a",
+                    "attempt_index": 1,
+                    "used_fallback_model": False,
+                    "attempt_duration_ms": 140.0,
+                    "provider_duration_ms": 100.0,
+                    "parse_duration_ms": 15.0,
+                    "timeout_ms": 20000,
+                    "prompt_chars": 1200,
+                    "context_chars": 400,
+                },
+            ),
+            _response(
+                opening="Now the pattern sharpens.",
+                current="The second pass tightens the reading around one clear move.",
+                emotional="The signal was there; it just needed less drift.",
+                guidance="Finish the one thing that turns noise into momentum.",
+                closing="Return when you want the next layer.",
+                generation_metrics={
+                    "attempt_model": "model-b",
+                    "attempt_index": 2,
+                    "used_fallback_model": True,
+                    "attempt_duration_ms": 210.0,
+                    "provider_duration_ms": 160.0,
+                    "parse_duration_ms": 20.0,
+                    "timeout_ms": 20000,
+                    "prompt_chars": 1500,
+                    "context_chars": 450,
+                },
+            ),
+        ]
+    )
+    validation_spy = ValidatorSpy(
+        [
+            ValidationResult(product_key="tarot", passed=False, issues=["needs_retry"], retry_hint="retry"),
+            ValidationResult(product_key="tarot", passed=True, issues=[]),
+        ]
+    )
+    monkeypatch.setattr("generation.orchestration.validate_product_payload", validation_spy)
+
+    context = GenerationContext(object_id="1", object_type="session", flow_type="tarot_solo", surface="full")
+    with caplog.at_level(logging.WARNING, logger="mystic.orchestration"):
+        result = orchestrator._generate_with_quality_gate(
+            context=context,
+            persona_id="ancient_tarot_reader",
+            flow_id="tarot_reading",
+            continuity_context={},
+            domain_context={},
+            contract_instruction="tarot contract",
+            payload_builder_kwargs={},
+        )
+
+    timing = result.payload["metadata"]["generation_timing"]
+    assert timing["attempt_count"] == 2
+    assert timing["provider_total_ms"] == 260.0
+    assert timing["parse_total_ms"] == 35.0
+    assert timing["attempt_total_ms"] == 350.0
+    assert timing["orchestration_overhead_ms"] >= 0.0
+    assert timing["attempt_models"] == ["model-a", "model-b"]
+    assert "total=" in timing["summary"]
+    assert "provider=260.0ms" in timing["summary"]
+    assert "parse=35.0ms" in timing["summary"]
+    assert "models=model-a,model-b" in timing["summary"]
+    assert any("generation_latency_breakdown" in record.message for record in caplog.records)
 
 
 

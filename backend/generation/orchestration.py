@@ -35,6 +35,38 @@ logger = logging.getLogger("mystic.orchestration")
 class MysticGenerationOrchestrator:
     """Phase-3 product-aware orchestration with bounded validation retries."""
 
+    def _summarize_generation_metrics(self, *, attempt_metrics: list[dict[str, Any]], total_duration_ms: float) -> dict[str, Any]:
+        provider_total_ms = round(
+            sum((metric.get("provider_duration_ms") or 0) for metric in attempt_metrics),
+            2,
+        )
+        parse_total_ms = round(
+            sum((metric.get("parse_duration_ms") or 0) for metric in attempt_metrics),
+            2,
+        )
+        attempt_total_ms = round(
+            sum((metric.get("attempt_duration_ms") or 0) for metric in attempt_metrics),
+            2,
+        )
+        orchestration_overhead_ms = round(max(0.0, total_duration_ms - provider_total_ms - parse_total_ms), 2)
+        attempt_models = [metric.get("attempt_model") for metric in attempt_metrics if metric.get("attempt_model")]
+        summary = (
+            f"total={total_duration_ms}ms "
+            f"provider={provider_total_ms}ms "
+            f"parse={parse_total_ms}ms "
+            f"overhead={orchestration_overhead_ms}ms "
+            f"attempts={len(attempt_metrics)} "
+            f"models={','.join(attempt_models) if attempt_models else 'unknown'}"
+        )
+        return {
+            "provider_total_ms": provider_total_ms,
+            "parse_total_ms": parse_total_ms,
+            "attempt_total_ms": attempt_total_ms,
+            "orchestration_overhead_ms": orchestration_overhead_ms,
+            "attempt_models": attempt_models,
+            "summary": summary,
+        }
+
     def _quality_gate_policy(self, *, context: GenerationContext, product_key: str | None) -> dict:
         return {
             "max_attempts": 2 if product_key else 1,
@@ -314,6 +346,10 @@ class MysticGenerationOrchestrator:
         final_attempt_count = len(attempts)
         total_duration_ms = round((time.perf_counter() - generation_started) * 1000, 2)
         attempt_metrics = [attempt[2].generation_metrics for attempt in attempts]
+        timing_summary = self._summarize_generation_metrics(
+            attempt_metrics=attempt_metrics,
+            total_duration_ms=total_duration_ms,
+        )
         generation_metrics = {
             "total_duration_ms": total_duration_ms,
             "retry_count": max(0, final_attempt_count - 1),
@@ -322,13 +358,19 @@ class MysticGenerationOrchestrator:
             "fallback_models_used": [metric.get("attempt_model") for metric in attempt_metrics if metric.get("used_fallback_model")],
             "prompt_chars": max((metric.get("prompt_chars") or 0) for metric in attempt_metrics) if attempt_metrics else 0,
             "context_chars": max((metric.get("context_chars") or 0) for metric in attempt_metrics) if attempt_metrics else 0,
+            "provider_total_ms": timing_summary["provider_total_ms"],
+            "parse_total_ms": timing_summary["parse_total_ms"],
+            "attempt_total_ms": timing_summary["attempt_total_ms"],
+            "orchestration_overhead_ms": timing_summary["orchestration_overhead_ms"],
+            "attempt_models": timing_summary["attempt_models"],
+            "summary": timing_summary["summary"],
             "attempts": attempt_metrics,
         }
         self._attach_generation_metrics(payload=final_payload, metrics=generation_metrics)
         self._attach_contract_metadata(context=context, payload=final_payload, validation=final_validation, attempts=final_attempt_count)
         final_guidance_text = next((section.get("text", "") for section in final_payload.get("sections", []) if section.get("id") in {"practical_guidance", "reflective_guidance"}), "")
         logger.warning(
-            "quality_gate_final product=%s flow=%s surface=%s attempts=%s retries=%s fallback=%s total_duration_ms=%s passed=%s issues=%s guidance=%r",
+            "quality_gate_final product=%s flow=%s surface=%s attempts=%s retries=%s fallback=%s total_duration_ms=%s passed=%s issues=%s guidance=%r timing_summary=%s",
             route.product_key,
             context.flow_type,
             context.surface,
@@ -339,6 +381,15 @@ class MysticGenerationOrchestrator:
             final_validation.passed,
             final_validation.issues,
             final_guidance_text[:240],
+            generation_metrics["summary"],
+        )
+        logger.warning(
+            "generation_latency_breakdown object_type=%s object_id=%s flow=%s surface=%s summary=%s",
+            context.object_type,
+            context.object_id,
+            context.flow_type,
+            context.surface,
+            generation_metrics["summary"],
         )
         final_result.payload = final_payload
         final_result.generation_metrics = generation_metrics
