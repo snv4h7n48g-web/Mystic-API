@@ -78,11 +78,11 @@ def test_tarot_validator_requires_card_specific_structure() -> None:
         "sections": [
             {
                 "id": "tarot_narrative",
-                "text": "The Hermit in the guidance position sets the tone of the spread. This card's symbolism points to retreat, discernment, and a slower answer.",
+                "text": "The Hermit in the guidance position sets the tone of the spread and asks for distance from noise before you decide. In interaction with the card-led structure, that retreat becomes discernment rather than avoidance, so the symbolism is doing more than naming solitude. The reading is showing how perspective changes the choice rather than delaying it.",
             },
             {
                 "id": "reflective_guidance",
-                "text": "Take one hour of deliberate solitude before making the next move so the card's quieter instruction can surface.",
+                "text": "Block one quiet hour tonight, write down the decision in plain language, and make one concrete move before tomorrow so the card's quieter instruction becomes action instead of atmosphere.",
             },
         ]
     }

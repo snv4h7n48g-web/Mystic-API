@@ -15,13 +15,14 @@ class StubOrchestrator(MysticGenerationOrchestrator):
         return response["normalized"], response["metadata"], response["result"]
 
 
-def _response(*, opening: str, current: str, emotional: str, guidance: str, closing: str):
+def _response(*, opening: str, current: str, emotional: str, guidance: str, closing: str, tarot_message: str | None = None):
     from generation.types import NormalizedMysticOutput
 
     normalized = NormalizedMysticOutput(
         opening_hook=opening,
         current_pattern=current,
         emotional_truth=emotional,
+        tarot_message=tarot_message or current,
         practical_guidance=guidance,
         continuity_callback=None,
         next_return_invitation=closing,
@@ -52,9 +53,10 @@ def test_quality_gate_retries_once_then_passes() -> None:
             ),
             _response(
                 opening="The Hermit opens the spread.",
-                current="The Hermit in the guidance position asks for retreat, while the spread's slower rhythm turns that retreat into discernment before action and shows why silence clarifies the next choice.",
+                current="The spread shows that solitude is a tool, not a wall.",
                 emotional="The spread shows that solitude is a tool, not a wall.",
-                guidance="Use the card's lantern image as your cue to move one clear step at a time.",
+                tarot_message="The Hermit in the guidance position asks for retreat, while Two of Wands in the outcome position turns that retreat into discernment before action and shows why silence clarifies the next choice. Together, The Hermit and Two of Wands create card symbolism that turns perspective into movement, so the spread is about choosing with clarity rather than calling delay wisdom.",
+                guidance="Block one quiet hour tonight, write the choice in plain language, and make one concrete move before tomorrow so the lantern image becomes a real decision instead of a mood.",
                 closing="Return when the next card is ready.",
             ),
         ]

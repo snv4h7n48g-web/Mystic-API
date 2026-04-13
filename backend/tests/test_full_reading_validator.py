@@ -132,3 +132,46 @@ def test_full_reading_validator_keeps_legacy_guidance_compatible() -> None:
     result = validate_product_payload('full_reading', payload)
 
     assert result.passed is True
+
+
+def test_full_reading_validator_flags_non_interpretive_palm_section_even_with_metadata_signals() -> None:
+    payload = {
+        'sections': [
+            {'id': 'reading_opening', 'headline': 'A threshold is here.', 'detail': 'A threshold is here and the pattern is ready to move.'},
+            {
+                'id': 'palm_revelation',
+                'headline': 'Palm',
+                'detail': 'The heart line is deep and curved. The head line is straight and clear.',
+                'evidence': {'title': 'Supporting palm details', 'items': ['Heart Line — deep and curved', 'Head Line — straight and clear']},
+            },
+            {
+                'id': 'tarot_message',
+                'headline': 'The cards are active.',
+                'detail': 'The Hermit in the present position and Two of Wands in the future position create a spread interaction where perspective becomes planning rather than delay.',
+                'evidence': {'tarot': {'spread': 'present / future', 'cards': [
+                    {'card': 'The Hermit', 'position': 'present', 'interpretation': 'discernment becomes clearer in solitude', 'question_link': 'you need space before choosing'},
+                    {'card': 'Two of Wands', 'position': 'future', 'interpretation': 'planning replaces passive waiting', 'question_link': 'the decision wants direction rather than more speculation'},
+                ]}},
+            },
+            {'id': 'signals_agree', 'headline': 'The overlap is real.', 'detail': 'Palm and tarot both point to hesitation becoming a habit instead of protection.'},
+            {'id': 'what_this_is_asking_of_you', 'headline': 'Stop outsourcing clarity.', 'detail': 'This is asking you to trust your own read on the situation instead of waiting for another sign to carry the responsibility for you.'},
+            {'id': 'your_next_move', 'headline': 'Act before the window closes.', 'detail': 'Write the decision in one sentence and send one message tonight so the pattern has to become concrete.'},
+        ],
+        'metadata': {
+            'modalities': {'includes_palm': True},
+            'evidence': {
+                'palm': {
+                    'signals': [
+                        {'display_name': 'Heart Line', 'observation': 'deep and curved', 'relevance': 'shows strong emotional investment'},
+                        {'display_name': 'Head Line', 'observation': 'straight and clear', 'relevance': 'shows control through analysis'},
+                    ]
+                }
+            }
+        },
+        'snapshot': {'core_theme': 'Choice is active.', 'main_tension': 'Control versus movement.', 'best_next_move': 'Send the message.'},
+    }
+
+    result = validate_product_payload('full_reading', payload)
+
+    assert result.passed is False
+    assert 'full_reading_palm_section_missing_interpretive_meaning' in result.issues

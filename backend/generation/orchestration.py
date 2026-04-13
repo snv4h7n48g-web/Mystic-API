@@ -285,8 +285,10 @@ class MysticGenerationOrchestrator:
         attempts: list[tuple[NormalizedMysticOutput, GenerationMetadata, OrchestrationResult, dict, ValidationResult]] = []
         retry_instruction: str | None = None
         generation_started = time.perf_counter()
+        policy = self._quality_gate_policy(context=context, product_key=(contract.product_key if contract else None))
+        max_attempts = max(1, int(policy.get('max_attempts', 1)))
 
-        for _ in range(2):
+        for _ in range(max_attempts):
             normalized, metadata, result = self._invoke_normalized_generation(
                 context=context,
                 persona_id=persona_id,

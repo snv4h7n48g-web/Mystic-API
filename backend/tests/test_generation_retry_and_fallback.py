@@ -321,3 +321,41 @@ def test_anthropic_preferred_route_falls_back_to_configured_model(monkeypatch) -
     assert result.generation_metrics["used_fallback_model"] is True
     assert result.generation_metrics["timeout_ms"] == 20000
     assert normalized.opening_hook == "Today starts with clarity."
+
+
+
+def test_quality_gate_uses_policy_max_attempts(monkeypatch) -> None:
+    from generation.orchestration import MysticGenerationOrchestrator
+    from generation.types import GenerationContext
+    from generation.validators import ValidationResult
+
+    orchestrator = MysticGenerationOrchestrator()
+    call_count = {'count': 0}
+
+    def fake_invoke(**kwargs):
+        call_count['count'] += 1
+        return (
+            object(),
+            type('Meta', (), {'persona_id': 'x', 'llm_profile_id': 'y', 'prompt_version': 'z', 'theme_tags': [], 'headline': '', 'model_id': 'm'})(),
+            type('Result', (), {'generation_metrics': {'attempt_model': 'model-a', 'used_fallback_model': False}, 'input_tokens': 1, 'output_tokens': 1, 'cost_usd': 0.1, 'payload': {}, 'metadata': None})(),
+        )
+
+    monkeypatch.setattr(orchestrator, '_invoke_normalized_generation', fake_invoke)
+    monkeypatch.setattr(orchestrator, '_build_payload_for_context', lambda **kwargs: {'sections': [], 'metadata': {}})
+    monkeypatch.setattr('generation.orchestration.get_product_route_for_context', lambda _context: type('Route', (), {'product_key': 'tarot'})())
+    monkeypatch.setattr('generation.orchestration.get_product_contract', lambda _product_key: type('Contract', (), {'product_key': 'tarot'})())
+    monkeypatch.setattr('generation.orchestration.validate_product_payload', lambda product_key, payload: ValidationResult(product_key='tarot', passed=False, issues=['tarot_missing_card_specific_language'], retry_hint='retry'))
+    monkeypatch.setattr(orchestrator, '_quality_gate_policy', lambda **kwargs: {'max_attempts': 1, 'attach_validation_metadata': True, 'hard_fail_on_exhausted_validation': False})
+    monkeypatch.setattr(orchestrator, '_attach_generation_metrics', lambda **kwargs: None)
+    monkeypatch.setattr(orchestrator, '_attach_contract_metadata', lambda **kwargs: None)
+
+    context = GenerationContext(object_id='1', object_type='session', flow_type='tarot_solo', surface='preview')
+    orchestrator._generate_with_quality_gate(
+        context=context,
+        persona_id='ancient_tarot_reader',
+        flow_id='tarot_preview',
+        continuity_context={},
+        domain_context={'flow_type': 'tarot_solo'},
+    )
+
+    assert call_count['count'] == 1

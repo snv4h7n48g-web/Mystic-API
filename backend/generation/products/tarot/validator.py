@@ -33,7 +33,11 @@ _STOPWORDS = {
 def _text_for(sections: list[dict], *ids: str) -> str:
     for section in sections:
         if section.get("id") in ids:
-            return str(section.get("detail") or section.get("text", "") or "").strip()
+            headline = str(section.get("headline") or section.get("text", "") or "").strip()
+            detail = str(section.get("detail") or "").strip()
+            if headline and detail and headline.casefold() != detail.casefold() and not detail.casefold().startswith(headline.casefold()):
+                return f"{headline} {detail}".strip()
+            return detail or headline
     return ""
 
 
@@ -75,11 +79,35 @@ def _has_card_level_depth(text: str) -> bool:
     lowered = (text or '').casefold()
     card_hits = sum(1 for marker in CARD_MARKERS if marker in lowered)
     position_hits = sum(1 for marker in SYMBOLIC_MARKERS if marker in lowered)
-    interpretation_hits = sum(1 for marker in ['suggests', 'reveals', 'asks', 'warns', 'shows', 'showing', 'points', 'because', 'together', 'while', 'whereas'] if marker in lowered)
+    interpretation_hits = sum(1 for marker in ['suggests', 'reveals', 'asks', 'warns', 'shows', 'showing', 'points', 'because', 'together', 'while', 'whereas', 'contributes', 'interaction', 'tension'] if marker in lowered)
     sentences = _sentence_count(text)
-    if card_hits >= 2 and position_hits >= 2 and interpretation_hits >= 3 and sentences >= 3:
+    unique_sentences = {part.strip().casefold() for part in re.split(r'(?<=[.!?])\s+', (text or '').strip()) if part.strip()}
+    if len(unique_sentences) < max(2, sentences):
+        return False
+    if card_hits >= 2 and position_hits >= 2 and interpretation_hits >= 3 and sentences >= 3 and _word_count(text) >= 35:
         return True
-    return card_hits >= 1 and position_hits >= 2 and interpretation_hits >= 1 and _word_count(text) >= 12 and sentences >= 1
+    if card_hits >= 2 and position_hits >= 2 and interpretation_hits >= 2 and _word_count(text) >= 24 and sentences >= 2:
+        return True
+    return card_hits >= 1 and position_hits >= 2 and interpretation_hits >= 1 and _word_count(text) >= 18 and sentences >= 2
+
+
+def _has_structural_duplication(text: str) -> bool:
+    sentences = [part.strip().casefold() for part in re.split(r'(?<=[.!?])\s+', (text or '').strip()) if part.strip()]
+    if len(sentences) < 2:
+        return False
+    seen: set[str] = set()
+    stems: set[str] = set()
+    for sentence in sentences:
+        normalized = re.sub(r'\W+', ' ', sentence).strip()
+        if not normalized:
+            continue
+        stem = ' '.join(_content_tokens(sentence)[:6])
+        if normalized in seen or (stem and stem in stems):
+            return True
+        seen.add(normalized)
+        if stem:
+            stems.add(stem)
+    return False
 
 
 def validate_tarot_payload(payload: dict) -> list[str]:
@@ -105,7 +133,7 @@ def validate_tarot_payload(payload: dict) -> list[str]:
         issues.append("tarot_missing_card_specific_language")
     if not any(marker in lowered for marker in SYMBOLIC_MARKERS):
         issues.append("tarot_missing_symbolic_structure")
-    if _word_count(narrative) < 12:
+    if _word_count(narrative) < 18:
         issues.append("tarot_narrative_too_shallow")
     if card_hits < 2 and structure_hits < 2:
         issues.append("tarot_narrative_under_grounded")
@@ -113,10 +141,12 @@ def validate_tarot_payload(payload: dict) -> list[str]:
         issues.append("tarot_narrative_missing_card_contribution_depth")
     if any(marker in guidance.casefold() for marker in _GENERIC_FILLER_MARKERS):
         issues.append("tarot_guidance_generic_filler")
-    if guidance and _word_count(guidance) < 10:
+    if guidance and _word_count(guidance) < 12:
         issues.append("tarot_guidance_too_shallow")
     if guidance and not _has_actionable_guidance(guidance):
         issues.append("tarot_guidance_missing_action")
+    if _has_structural_duplication(narrative):
+        issues.append("tarot_narrative_internal_duplication")
     if opening and _is_too_similar(opening, narrative):
         issues.append("tarot_opening_narrative_repetition")
     if synthesis and _is_too_similar(narrative, synthesis):

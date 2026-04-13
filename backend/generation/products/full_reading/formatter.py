@@ -259,7 +259,6 @@ def _build_section(
     tarot_cards: list[dict] | None = None,
     spread: str | None = None,
     combined_interpretation: str | None = None,
-    palm_signals: list[dict] | None = None,
 ) -> dict:
     headline, detail = _headline_and_detail(body, fallback_headline=fallback_headline)
     payload = {
@@ -281,10 +280,6 @@ def _build_section(
             'cards': tarot_cards,
             'combined_interpretation': _clean(combined_interpretation),
         }
-    if palm_signals:
-        evidence['palm'] = {
-            'signals': palm_signals,
-        }
     if evidence:
         payload['evidence'] = evidence
     return payload
@@ -300,12 +295,18 @@ def _enrich_palm_revelation(*, palm_revelation: str, palm_signals: list[dict], q
         if len(interpretive_lines) > 2:
             base += ' Together, these signs describe the pattern your hand is repeating rather than a fixed fate.'
         if question:
-            base += f' In relation to your question, the hand reads more like a mirror of your current pattern than a promise carved in stone.'
+            base += ' In relation to your question, the hand reads more like a mirror of your current pattern than a promise carved in stone.'
         return base.strip()
 
     lowered = cleaned.casefold()
-    if interpretive_lines and not any(phrase.casefold() in lowered for phrase in ['suggests', 'speaks to', 'matters because', 'points toward', 'shows the pattern']):
-        cleaned = f"{cleaned.rstrip('.')} . {' '.join(interpretive_lines[:2])}".replace(' .', '.')
+    has_interpretive_language = any(
+        phrase.casefold() in lowered
+        for phrase in ['suggests', 'speaks to', 'matters because', 'points toward', 'shows the pattern', 'means', 'indicates', 'reveals']
+    )
+    if interpretive_lines and (len(cleaned.split()) < 35 or not has_interpretive_language):
+        cleaned = f"{cleaned.rstrip('.')} {' '.join(interpretive_lines[:2])}".strip()
+    if question and 'question' not in lowered and 'matters because' not in lowered:
+        cleaned = f"{cleaned.rstrip('.')} In relation to your question, these palm features matter because they show how this pattern is being carried in real time."
     return cleaned.strip()
 
 
@@ -342,8 +343,8 @@ def _enrich_tarot_message(*, tarot_message: str, tarot_cards: list[dict], tarot_
         return expansion
     if not expansion:
         return cleaned
-    if len(cleaned.split()) < 45 or expansion.casefold() not in cleaned.casefold():
-        return f"{cleaned.rstrip('.')} . {expansion}".replace(' .', '.').strip()
+    if len(cleaned.split()) < 70 or expansion.casefold() not in cleaned.casefold():
+        return f"{cleaned.rstrip('.')} {expansion}".strip()
     return cleaned
 
 
@@ -416,8 +417,7 @@ def build_full_reading_payload(
                 fallback_headline='Your palm shows how this question is being carried in your system.',
                 default_expanded=False,
                 evidence_title='Supporting palm details',
-                evidence_items=palm_feature_summaries,
-                palm_signals=palm_signals,
+                evidence_items=palm_feature_summaries
             )
         )
     sections.extend([

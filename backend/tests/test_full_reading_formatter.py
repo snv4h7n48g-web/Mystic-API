@@ -95,7 +95,9 @@ def test_build_full_reading_payload_emits_layered_sections_and_modality_evidence
     assert opening_section['default_expanded'] is True
     assert tarot_section['evidence']['tarot']['spread'] == 'present / crossing'
     assert len(tarot_section['evidence']['tarot']['cards']) == 2
-    assert palm_section['evidence']['palm']['signals'][0]['feature'] == 'Heart Line'
+    assert palm_section['evidence']['title'] == 'Supporting palm details'
+    assert 'Heart Line speaks to emotional expression' in palm_section['evidence']['items'][0]
+    assert payload['metadata']['evidence']['palm']['signals'][0]['feature'] == 'Heart Line'
     assert payload['metadata']['evidence']['tarot']['cards'][0]['card'] == 'The Chariot'
 
 
@@ -135,8 +137,9 @@ def test_build_full_reading_payload_humanizes_palm_signals_and_rich_tarot_eviden
         include_palm=True,
     )
 
-    palm_signal = next(section for section in payload['sections'] if section['id'] == 'palm_revelation')['evidence']['palm']['signals'][0]
+    palm_signal = payload['metadata']['evidence']['palm']['signals'][0]
     tarot_card = next(section for section in payload['sections'] if section['id'] == 'tarot_message')['evidence']['tarot']['cards'][0]
+    assert 'palm' not in next(section for section in payload['sections'] if section['id'] == 'palm_revelation').get('evidence', {})
     assert palm_signal['display_name'] == 'Heart Line'
     assert palm_signal['icon_key'] == 'heart_line'
     assert 'speaks to emotional expression' in palm_signal['interpretation']

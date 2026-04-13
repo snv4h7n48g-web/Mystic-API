@@ -105,6 +105,11 @@ def _is_shallow_interpretation(text: str) -> bool:
     tokens = _content_tokens(text)
     return len(tokens) < 6
 
+
+def _has_interpretive_meaning(text: str) -> bool:
+    lowered = (text or '').casefold()
+    return any(marker in lowered for marker in ['suggests', 'speaks to', 'means', 'reveals', 'indicates', 'points toward', 'matters because'])
+
 def validate_full_reading_payload(payload: dict) -> list[str]:
     sections = payload.get('sections', [])
     issues: list[str] = []
@@ -185,7 +190,10 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
     if include_palm and palm:
         lowered = palm.casefold()
         palm_evidence = palm_section.get('evidence') if isinstance(palm_section.get('evidence'), dict) else {}
-        palm_signals = ((palm_evidence.get('palm') or {}) if isinstance(palm_evidence.get('palm'), dict) else {}).get('signals')
+        metadata_evidence = metadata.get('evidence') if isinstance(metadata.get('evidence'), dict) else {}
+        section_palm = (palm_evidence.get('palm') or {}) if isinstance(palm_evidence.get('palm'), dict) else {}
+        metadata_palm = (metadata_evidence.get('palm') or {}) if isinstance(metadata_evidence.get('palm'), dict) else {}
+        palm_signals = section_palm.get('signals') or metadata_palm.get('signals')
         evidence_items = palm_evidence.get('items') if isinstance(palm_evidence.get('items'), list) else []
         if not any(marker in lowered for marker in _PALM_MARKERS) and not palm_signals and not evidence_items:
             issues.append('full_reading_palm_section_missing_feature_evidence')
@@ -196,6 +204,8 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
                 issues.append('full_reading_palm_section_missing_signal_state')
             if not all(_is_human_readable_label(str((signal.get('display_name') or signal.get('feature') or ''))) for signal in palm_signals if isinstance(signal, dict)):
                 issues.append('full_reading_palm_section_non_human_labels')
+        if not _has_interpretive_meaning(palm):
+            issues.append('full_reading_palm_section_missing_interpretive_meaning')
 
     if tarot:
         lowered = tarot.casefold()

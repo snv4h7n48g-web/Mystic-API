@@ -178,3 +178,21 @@ def test_tarot_validator_accepts_detailed_card_led_payload() -> None:
     result = validate_product_payload('tarot', payload)
 
     assert result.valid is True
+
+
+def test_tarot_validator_rejects_internal_duplication_even_when_card_names_are_present() -> None:
+    payload = {
+        'sections': [
+            {'id': 'opening_invocation', 'text': 'The spread opens on a decision that already has weight.'},
+            {
+                'id': 'tarot_narrative',
+                'text': 'The Hermit in the present position asks for distance from noise. The Hermit in the present position asks for distance from noise. Two of Wands in the future position suggests planning, and together the spread shows perspective turning into deliberate direction.',
+            },
+            {'id': 'reflective_guidance', 'text': 'Block one quiet hour tonight, write down the two live options, and send one message that commits you to the direction that still feels true after the room settles.'},
+        ]
+    }
+
+    result = validate_product_payload('tarot', payload)
+
+    assert result.passed is False
+    assert 'tarot_narrative_internal_duplication' in result.issues
