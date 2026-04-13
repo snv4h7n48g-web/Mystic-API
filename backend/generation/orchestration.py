@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import time
+from typing import Any
 
 from bedrock_service import get_bedrock_service
 
@@ -70,7 +72,7 @@ class MysticGenerationOrchestrator:
             candidate_model_ids.append(fallback_model_id)
 
         last_error: Exception | None = None
-        for candidate_model_id in candidate_model_ids:
+        for candidate_index, candidate_model_id in enumerate(candidate_model_ids, start=1):
             profile = LlmProfile(
                 id=base_profile.id,
                 model_id=candidate_model_id,
@@ -79,6 +81,7 @@ class MysticGenerationOrchestrator:
                 max_tokens=route.max_tokens_for_surface(context.surface),
                 timeout_ms=base_profile.timeout_ms,
             )
+            attempt_started = time.perf_counter()
             try:
                 llm_result = bedrock.invoke_text(
                     model_id=profile.model_id,
@@ -87,8 +90,12 @@ class MysticGenerationOrchestrator:
                     temperature=profile.temperature,
                     top_p=profile.top_p,
                     max_tokens=profile.max_tokens,
+                    timeout_ms=profile.timeout_ms,
                 )
+                parse_started = time.perf_counter()
                 normalized = parse_normalized_output(llm_result["text"])
+                parse_duration_ms = round((time.perf_counter() - parse_started) * 1000, 2)
+                total_attempt_ms = round((time.perf_counter() - attempt_started) * 1000, 2)
                 metadata = GenerationMetadata(
                     persona_id=persona.id,
                     llm_profile_id=profile.id,
@@ -103,10 +110,51 @@ class MysticGenerationOrchestrator:
                     input_tokens=llm_result["input_tokens"],
                     output_tokens=llm_result["output_tokens"],
                     cost_usd=llm_result["cost_usd"],
+                    generation_metrics={
+                        "attempt_model": candidate_model_id,
+                        "attempt_index": candidate_index,
+                        "used_fallback_model": candidate_index > 1,
+                        "attempt_duration_ms": total_attempt_ms,
+                        "provider_duration_ms": llm_result.get("duration_ms"),
+                        "parse_duration_ms": parse_duration_ms,
+                        "timeout_ms": profile.timeout_ms,
+                        "prompt_chars": prompt.get("prompt_chars", 0),
+                        "prompt_message_count": len(prompt.get("messages", [])),
+                        "context_chars": prompt.get("context_chars", 0),
+                    },
+                )
+                logger.info(
+                    "generation_attempt_success flow=%s surface=%s product=%s attempt=%s/%s model=%s fallback=%s duration_ms=%s provider_ms=%s parse_ms=%s timeout_ms=%s prompt_chars=%s",
+                    context.flow_type,
+                    context.surface,
+                    route.product_key,
+                    candidate_index,
+                    len(candidate_model_ids),
+                    candidate_model_id,
+                    candidate_index > 1,
+                    total_attempt_ms,
+                    llm_result.get("duration_ms"),
+                    parse_duration_ms,
+                    profile.timeout_ms,
+                    prompt.get("prompt_chars", 0),
                 )
                 return normalized, metadata, result
             except Exception as exc:
                 last_error = exc
+                elapsed_ms = round((time.perf_counter() - attempt_started) * 1000, 2)
+                logger.warning(
+                    "generation_attempt_failed flow=%s surface=%s product=%s attempt=%s/%s model=%s fallback=%s duration_ms=%s timeout_ms=%s error=%s",
+                    context.flow_type,
+                    context.surface,
+                    route.product_key,
+                    candidate_index,
+                    len(candidate_model_ids),
+                    candidate_model_id,
+                    candidate_index > 1,
+                    elapsed_ms,
+                    profile.timeout_ms,
+                    exc,
+                )
 
         assert last_error is not None
         raise last_error
@@ -128,6 +176,10 @@ class MysticGenerationOrchestrator:
             "attempts": attempts,
         }
         metadata["expected_section_ids"] = contract.expected_section_ids
+
+    def _attach_generation_metrics(self, *, payload: dict, metrics: dict[str, Any]) -> None:
+        metadata = payload.setdefault("metadata", payload.setdefault("meta", {}))
+        metadata["generation_timing"] = metrics
 
     def _build_payload_for_context(self, *, context: GenerationContext, normalized: NormalizedMysticOutput, metadata: GenerationMetadata, unlock_price: dict | None = None, product_id: str | None = None, entitlements: dict | None = None, astrology_facts: dict | None = None, tarot_payload: dict | None = None, palm_features: list[dict] | None = None, include_palm: bool = False, deep_access: bool = False, content_contract: dict | None = None, person1: dict | None = None, person2: dict | None = None, chart1: dict | None = None, chart2: dict | None = None, zodiac1: dict | None = None, zodiac2: dict | None = None, synastry: dict | None = None, zodiac_harmony: dict | None = None, analysis: dict | None = None, price_amount: float = 0.0) -> dict:
         if context.object_type == "session" and context.surface == "preview":
@@ -232,6 +284,7 @@ class MysticGenerationOrchestrator:
         contract = get_product_contract(route.product_key)
         attempts: list[tuple[NormalizedMysticOutput, GenerationMetadata, OrchestrationResult, dict, ValidationResult]] = []
         retry_instruction: str | None = None
+        generation_started = time.perf_counter()
 
         for _ in range(2):
             normalized, metadata, result = self._invoke_normalized_generation(
@@ -257,19 +310,36 @@ class MysticGenerationOrchestrator:
 
         _, _, final_result, final_payload, final_validation = attempts[-1]
         final_attempt_count = len(attempts)
+        total_duration_ms = round((time.perf_counter() - generation_started) * 1000, 2)
+        attempt_metrics = [attempt[2].generation_metrics for attempt in attempts]
+        generation_metrics = {
+            "total_duration_ms": total_duration_ms,
+            "retry_count": max(0, final_attempt_count - 1),
+            "attempt_count": final_attempt_count,
+            "used_fallback_model": any(metric.get("used_fallback_model") for metric in attempt_metrics),
+            "fallback_models_used": [metric.get("attempt_model") for metric in attempt_metrics if metric.get("used_fallback_model")],
+            "prompt_chars": max((metric.get("prompt_chars") or 0) for metric in attempt_metrics) if attempt_metrics else 0,
+            "context_chars": max((metric.get("context_chars") or 0) for metric in attempt_metrics) if attempt_metrics else 0,
+            "attempts": attempt_metrics,
+        }
+        self._attach_generation_metrics(payload=final_payload, metrics=generation_metrics)
         self._attach_contract_metadata(context=context, payload=final_payload, validation=final_validation, attempts=final_attempt_count)
         final_guidance_text = next((section.get("text", "") for section in final_payload.get("sections", []) if section.get("id") in {"practical_guidance", "reflective_guidance"}), "")
         logger.warning(
-            "quality_gate_final product=%s flow=%s surface=%s attempts=%s passed=%s issues=%s guidance=%r",
+            "quality_gate_final product=%s flow=%s surface=%s attempts=%s retries=%s fallback=%s total_duration_ms=%s passed=%s issues=%s guidance=%r",
             route.product_key,
             context.flow_type,
             context.surface,
             final_attempt_count,
+            generation_metrics["retry_count"],
+            generation_metrics["used_fallback_model"],
+            total_duration_ms,
             final_validation.passed,
             final_validation.issues,
             final_guidance_text[:240],
         )
         final_result.payload = final_payload
+        final_result.generation_metrics = generation_metrics
         if final_attempt_count > 1:
             final_result.input_tokens = sum(attempt[2].input_tokens for attempt in attempts)
             final_result.output_tokens = sum(attempt[2].output_tokens for attempt in attempts)

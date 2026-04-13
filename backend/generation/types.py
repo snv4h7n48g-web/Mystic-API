@@ -58,3 +58,4 @@ class OrchestrationResult:
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float = 0.0
+    generation_metrics: dict = field(default_factory=dict)

@@ -28,6 +28,8 @@ class StubBedrockService:
         response = self.responses_by_model[model_id].pop(0)
         if isinstance(response, Exception):
             raise response
+        response.setdefault("duration_ms", 123.0)
+        response.setdefault("timeout_ms", kwargs.get("timeout_ms"))
         return response
 
 
@@ -132,6 +134,8 @@ def test_retry_correction_applies_once_and_returns_corrected_payload(monkeypatch
     assert result.payload["sections"][0]["text"] == "The Hermit opens the spread."
     assert result.payload["metadata"]["validation"]["attempts"] == 2
     assert result.payload["metadata"]["validation"]["valid"] is True
+    assert result.payload["metadata"]["generation_timing"]["retry_count"] == 1
+    assert len(result.payload["metadata"]["generation_timing"]["attempts"]) == 2
     assert result.input_tokens == 20
     assert result.output_tokens == 40
 
@@ -311,6 +315,9 @@ def test_anthropic_preferred_route_falls_back_to_configured_model(monkeypatch) -
     )
 
     assert [call["model_id"] for call in bedrock.calls] == [primary_model, fallback_model]
+    assert all(call["timeout_ms"] == 20000 for call in bedrock.calls)
     assert metadata.model_id == fallback_model
     assert result.metadata.model_id == fallback_model
+    assert result.generation_metrics["used_fallback_model"] is True
+    assert result.generation_metrics["timeout_ms"] == 20000
     assert normalized.opening_hook == "Today starts with clarity."

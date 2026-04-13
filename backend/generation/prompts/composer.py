@@ -11,8 +11,22 @@ from .persona_prompts import PERSONA_PROMPTS
 PROMPT_VERSION = "mystic-v1"
 
 
+def _prune_prompt_payload(data: Any) -> Any:
+    if isinstance(data, dict):
+        cleaned = {
+            key: _prune_prompt_payload(value)
+            for key, value in data.items()
+            if value is not None and value != ""
+        }
+        return {key: value for key, value in cleaned.items() if value not in ({}, [])}
+    if isinstance(data, list):
+        cleaned = [_prune_prompt_payload(item) for item in data]
+        return [item for item in cleaned if item not in (None, "", {}, [])]
+    return data
+
+
 def _compact_json(data: Any) -> str:
-    return json.dumps(data, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+    return json.dumps(_prune_prompt_payload(data), separators=(",", ":"), sort_keys=True, ensure_ascii=False)
 
 
 def compose_generation_prompt(
@@ -43,8 +57,11 @@ def compose_generation_prompt(
         OUTPUT_SCHEMA_INSTRUCTION,
     ])
 
+    prompt_chars = len(BASE_SYSTEM_PROMPT) + sum(len(message) for message in messages)
     return {
         "system_prompt": BASE_SYSTEM_PROMPT,
         "messages": messages,
         "prompt_version": PROMPT_VERSION,
+        "prompt_chars": prompt_chars,
+        "context_chars": len(continuity_blob) + len(domain_blob),
     }

@@ -37,6 +37,32 @@ def test_compose_generation_prompt_compacts_context_json() -> None:
     assert "\n  " not in continuity_message
     assert "\n  " not in domain_message
     assert '{"latest_flow_type":"tarot_solo","recent":["tarot_solo"]}' in continuity_message
+    assert prompt["prompt_chars"] >= prompt["context_chars"] > 0
+
+
+def test_compose_generation_prompt_prunes_empty_prompt_bloat() -> None:
+    prompt = compose_generation_prompt(
+        persona_id="ancient_tarot_reader",
+        flow_id="tarot_reading",
+        continuity_context={"recent": [], "latest_flow_type": "tarot_solo", "notes": None},
+        domain_context={
+            "question": "Should I move forward?",
+            "style": "",
+            "include_palm": False,
+            "deep_access": False,
+            "content_contract": {},
+            "palm_features": [],
+            "tarot": {"cards": ["The Chariot"], "spread": None},
+        },
+    )
+
+    domain_message = next(message for message in prompt["messages"] if message.startswith("DOMAIN_CONTEXT:\n"))
+
+    assert '"style"' not in domain_message
+    assert '"content_contract"' not in domain_message
+    assert '"palm_features"' not in domain_message
+    assert '"include_palm":false' in domain_message
+    assert '"deep_access":false' in domain_message
 
 
 def test_parse_normalized_output_accepts_valid_json() -> None:
@@ -149,6 +175,7 @@ def test_invoke_text_uses_bedrock_converse_and_returns_usage() -> None:
             }
 
     service.client = FakeClient()
+    service._client_for_timeout = lambda timeout_ms: service.client
 
     result = service.invoke_text(
         model_id="test-model",
@@ -157,11 +184,14 @@ def test_invoke_text_uses_bedrock_converse_and_returns_usage() -> None:
         temperature=0.8,
         top_p=0.9,
         max_tokens=123,
+        timeout_ms=4321,
     )
 
     assert result["model"] == "test-model"
     assert result["input_tokens"] == 12
     assert result["output_tokens"] == 34
+    assert result["timeout_ms"] == 4321
+    assert result["duration_ms"] >= 0
     assert result["text"].startswith('{"opening_hook"')
 
 
@@ -182,6 +212,7 @@ def test_invoke_text_omits_top_p_for_anthropic_opus_profiles() -> None:
             }
 
     service.client = FakeClient()
+    service._client_for_timeout = lambda timeout_ms: service.client
 
     result = service.invoke_text(
         model_id="us.anthropic.claude-opus-4-6-v1",
@@ -190,6 +221,7 @@ def test_invoke_text_omits_top_p_for_anthropic_opus_profiles() -> None:
         temperature=0.8,
         top_p=0.9,
         max_tokens=123,
+        timeout_ms=25000,
     )
 
     assert result["model"] == "us.anthropic.claude-opus-4-6-v1"

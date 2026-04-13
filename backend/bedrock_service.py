@@ -6,64 +6,65 @@ Handles preview and full reading generation with cost tracking.
 import boto3
 import json
 import os
+import time
+from botocore.config import Config
 from typing import Dict, Any, List, Optional
-from datetime import datetime
 from reference_knowledge import ASTROLOGY_REFERENCE, TAROT_REFERENCE, PALMISTRY_REFERENCE, VOICE_LIBRARY
 
 
 class BedrockService:
     """Service for interacting with AWS Bedrock Nova models."""
-    
+
     def __init__(self):
         """Initialize Bedrock client with AWS credentials from environment or AWS CLI."""
-        # Get credentials from environment (will be None if not set)
         aws_access_key = os.getenv('AWS_ACCESS_KEY_ID')
         aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
         region = os.getenv('AWS_REGION', 'us-east-1')
-        
-        # Build client kwargs
-        client_kwargs = {
+
+        self._base_client_kwargs = {
             'service_name': 'bedrock-runtime',
-            'region_name': region
+            'region_name': region,
         }
-        
-        # Only add explicit credentials if they're set in .env
+
         if aws_access_key and aws_access_key != 'your_access_key_here':
-            client_kwargs['aws_access_key_id'] = aws_access_key
-            client_kwargs['aws_secret_access_key'] = aws_secret_key
-        
-        # Create client (will use AWS CLI credentials if explicit ones not provided)
-        self.client = boto3.client(**client_kwargs)
-        
-        # Nova model IDs
+            self._base_client_kwargs['aws_access_key_id'] = aws_access_key
+            self._base_client_kwargs['aws_secret_access_key'] = aws_secret_key
+
+        self._client_cache: dict[int, Any] = {}
+        self.client = self._client_for_timeout(None)
+
         self.preview_model = os.getenv('BEDROCK_PREVIEW_MODEL', 'us.amazon.nova-lite-v1:0')
         self.full_model = os.getenv('BEDROCK_FULL_MODEL', 'us.amazon.nova-pro-v1:0')
-        
-        # Token limits
+
         self.preview_max_tokens = 200
         self.full_max_tokens = 1800
-        
-        # Cost tracking (approximate USD per 1000 tokens)
+
         self.costs = {
             'us.amazon.nova-lite-v1:0': {'input': 0.00006, 'output': 0.00024},
             'us.amazon.nova-pro-v1:0': {'input': 0.0008, 'output': 0.0032},
         }
-    
+
+    def _client_for_timeout(self, timeout_ms: Optional[int]):
+        if timeout_ms is None:
+            return self.client if hasattr(self, 'client') else boto3.client(**self._base_client_kwargs)
+        timeout_ms = max(1, int(timeout_ms))
+        if timeout_ms not in self._client_cache:
+            timeout_seconds = max(1, timeout_ms / 1000.0)
+            self._client_cache[timeout_ms] = boto3.client(
+                **self._base_client_kwargs,
+                config=Config(
+                    connect_timeout=timeout_seconds,
+                    read_timeout=timeout_seconds,
+                    retries={'max_attempts': 1, 'mode': 'standard'},
+                ),
+            )
+        return self._client_cache[timeout_ms]
+
     def _build_messages(
         self,
         system_prompt: str,
         user_content: str
     ) -> tuple[str, List[Dict[str, Any]]]:
-        """
-        Build messages in Bedrock Converse API format.
-        
-        Args:
-            system_prompt: System instructions
-            user_content: User message content
-            
-        Returns:
-            Tuple of (system_prompt, messages_list)
-        """
         messages = [
             {
                 "role": "user",
@@ -83,31 +84,20 @@ class BedrockService:
             }
             for message in user_messages
         ]
-    
+
     def _calculate_cost(
-        self, 
-        model_id: str, 
-        input_tokens: int, 
+        self,
+        model_id: str,
+        input_tokens: int,
         output_tokens: int
     ) -> float:
-        """
-        Calculate approximate cost for a completion.
-        
-        Args:
-            model_id: Bedrock model identifier
-            input_tokens: Number of input tokens
-            output_tokens: Number of output tokens
-            
-        Returns:
-            Cost in USD
-        """
         if model_id not in self.costs:
             return 0.0
-        
+
         cost_per_1k = self.costs[model_id]
         input_cost = (input_tokens / 1000) * cost_per_1k['input']
         output_cost = (output_tokens / 1000) * cost_per_1k['output']
-        
+
         return round(input_cost + output_cost, 6)
 
     def invoke_text(
@@ -119,6 +109,7 @@ class BedrockService:
         temperature: float,
         top_p: float,
         max_tokens: int,
+        timeout_ms: Optional[int] = None,
     ) -> Dict[str, Any]:
         messages = self._build_message_list(user_messages)
         inference_config: Dict[str, Any] = {
@@ -132,8 +123,10 @@ class BedrockService:
         )
         if not anthropic_opus_profile:
             inference_config["topP"] = top_p
+        client = self._client_for_timeout(timeout_ms)
+        started = time.perf_counter()
         try:
-            response = self.client.converse(
+            response = client.converse(
                 modelId=model_id,
                 messages=messages,
                 system=[{"text": system_prompt}],
@@ -151,10 +144,12 @@ class BedrockService:
                 'cost_usd': cost,
                 'model': model_id,
                 'raw': response,
+                'duration_ms': round((time.perf_counter() - started) * 1000, 2),
+                'timeout_ms': timeout_ms,
             }
         except Exception as e:
             raise RuntimeError(f"Bedrock text generation failed: {str(e)}")
-    
+
     def _build_reference_block(self) -> str:
         return (
             "REFERENCE MATERIAL (use as grounding, not prediction):\n"
@@ -378,31 +373,11 @@ class BedrockService:
 
         return sections
 
-    def generate_preview_teaser(
-        self,
-        question: str,
-        astrology_facts: Dict[str, Any],
-        tarot_cards: List[Dict[str, str]],
-        palm_facts: Optional[List[Dict[str, str]]] = None,
-        flow_type: str = "combined",
-    ) -> Dict[str, Any]:
-        """
-        Generate preview teaser using Nova Lite (cheap, fast).
-        
-        Args:
-            question: User's question/intention
-            astrology_facts: Computed astrology placements
-            tarot_cards: Drawn tarot cards
-            palm_facts: Optional palm reading features
-            
-        Returns:
-            Dict with teaser_text, tokens used, and cost
-        """
-        # Build system prompt
+    # legacy generation helpers remain below unchanged in behavior
+    def generate_preview_teaser(self, question: str, astrology_facts: Dict[str, Any], tarot_cards: List[Dict[str, str]], palm_facts: Optional[List[Dict[str, str]]] = None, flow_type: str = "combined") -> Dict[str, Any]:
         reference_block = self._build_reference_block()
         anchors = self._build_anchor_list(astrology_facts, tarot_cards, palm_facts)
         primary_anchors = self._format_primary_anchors(anchors, count=3)
-
         system_prompt = f"""You are an insightful metaphysical reader providing preview teasers.
 
 CRITICAL RULES:
@@ -411,11 +386,11 @@ CRITICAL RULES:
 - Ground interpretations in the provided reference material
 - Include one directional forecast (short and specific)
 - Avoid generic reassurance
-- NO generic phrases like "you are someone who" or vague affirmations
+- NO generic phrases like \"you are someone who\" or vague affirmations
 - Must feel specific to THIS person's data
 - Do not invent symbols not present in the inputs
 - Keep it deterministic in style: choose one central pattern and stay with it
-- Avoid hedge-stacking ("maybe/perhaps/might" chains)
+- Avoid hedge-stacking (\"maybe/perhaps/might\" chains)
 - Avoid technical or textbook language; write like a grounded, real person
 - Use plain, relatable phrasing with grit and momentum
 
@@ -426,15 +401,12 @@ TONE: Grounded, bold, relatable, with grit and a little fun.
 FLOW TYPE: {flow_type}
 
 {reference_block}"""
-
-        # Build user message with data
         palm_section = ""
         if palm_facts:
-            palm_section = f"\n\nPalm features detected:\n{json.dumps(palm_facts, indent=2)}"
-        
+            palm_section = f"\n\nPalm features detected:\n{json.dumps(palm_facts, separators=(',', ':'))}"
         user_content = f"""Generate a preview teaser for this reading:
 
-Question: "{question}"
+Question: \"{question}\"
 
 Primary anchors (must use these first):
 {primary_anchors}
@@ -443,86 +415,31 @@ All anchors available:
 {self._format_anchors(anchors)}
 
 Astrology placements:
-{json.dumps(astrology_facts, indent=2)}
+{json.dumps(astrology_facts, separators=(',', ':'))}
 
 Tarot cards drawn:
-{json.dumps(tarot_cards, indent=2)}{palm_section}
+{json.dumps(tarot_cards, separators=(',', ':'))}{palm_section}
 
 Generate a 2-3 sentence teaser that creates curiosity about what these elements reveal together while remaining grounded, specific, and human."""
-
         system, messages = self._build_messages(system_prompt, user_content)
-        
         try:
-            # Call Bedrock Converse API
-            response = self.client.converse(
-                modelId=self.preview_model,
-                messages=messages,
-                system=[{"text": system}],
-                inferenceConfig={
-                    "maxTokens": self.preview_max_tokens,
-                    "temperature": 0.7,
-                    "topP": 0.92
-                }
-            )
-            
-            # Extract response
+            response = self.client.converse(modelId=self.preview_model, messages=messages, system=[{"text": system}], inferenceConfig={"maxTokens": self.preview_max_tokens, "temperature": 0.7, "topP": 0.92})
             output_text = response['output']['message']['content'][0]['text']
-            
-            # Extract token usage
             usage = response.get('usage', {})
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
-            
-            # Calculate cost
             cost = self._calculate_cost(self.preview_model, input_tokens, output_tokens)
-            
-            return {
-                'teaser_text': output_text.strip(),
-                'input_tokens': input_tokens,
-                'output_tokens': output_tokens,
-                'cost_usd': cost,
-                'model': self.preview_model
-            }
-            
+            return {'teaser_text': output_text.strip(), 'input_tokens': input_tokens, 'output_tokens': output_tokens, 'cost_usd': cost, 'model': self.preview_model}
         except Exception as e:
             raise RuntimeError(f"Bedrock preview generation failed: {str(e)}")
-    
-    def generate_full_reading(
-        self,
-        question: str,
-        astrology_facts: Dict[str, Any],
-        tarot_cards: List[Dict[str, str]],
-        palm_facts: Optional[List[Dict[str, str]]] = None,
-        style: str = "grounded",
-        flow_type: str = "combined",
-        include_palm: bool = True,
-    ) -> Dict[str, Any]:
-        """
-        Generate full 7-section reading using Nova Pro.
-        
-        Args:
-            question: User's question/intention
-            astrology_facts: Computed astrology placements
-            tarot_cards: Drawn tarot cards
-            palm_facts: Optional palm reading features
-            style: Reading style (grounded/mystical/direct)
-            
-        Returns:
-            Dict with sections, tokens used, and cost
-        """
-        # Build system prompt with schema
+
+    def generate_full_reading(self, question: str, astrology_facts: Dict[str, Any], tarot_cards: List[Dict[str, str]], palm_facts: Optional[List[Dict[str, str]]] = None, style: str = "grounded", flow_type: str = "combined", include_palm: bool = True) -> Dict[str, Any]:
         reference_block = self._build_reference_block()
         anchors = self._build_anchor_list(astrology_facts, tarot_cards, palm_facts)
         primary_anchors = self._format_primary_anchors(anchors, count=3)
         schema = self._flow_reading_schema(flow_type, include_palm=include_palm)
-        schema_lines = "\n".join(
-            f"- {idx + 1}. {item['delimiter']} ({item['instruction']})"
-            for idx, item in enumerate(schema)
-        )
-        format_lines = "\n\n".join(
-            f"---{item['delimiter']}---\n[text here]" for item in schema
-        )
-
+        schema_lines = "\n".join(f"- {idx + 1}. {item['delimiter']} ({item['instruction']})" for idx, item in enumerate(schema))
+        format_lines = "\n\n".join(f"---{item['delimiter']}---\n[text here]" for item in schema)
         system_prompt = f"""You are an insightful metaphysical reader creating personalised readings.
 
 STYLE: {style}
@@ -542,7 +459,7 @@ CRITICAL RULES:
 - NO generic filler phrases
 - Each section must feel specific to THIS person's data
 - Keep interpretation deterministic in style: choose a dominant through-line and maintain it
-- Avoid over-hedging; do not stack "maybe/perhaps/might" repeatedly
+- Avoid over-hedging; do not stack \"maybe/perhaps/might\" repeatedly
 - Avoid technical or textbook language; keep it plain and human
 - Use concrete, relatable phrasing with grit, determination, and momentum
 - Total output: 600-900 words
@@ -560,15 +477,12 @@ Output ONLY the reading text in this format:
 {format_lines}
 
 {reference_block}"""
-
-        # Build user message
         palm_section = ""
         if palm_facts:
-            palm_section = f"\n\nPalm features:\n{json.dumps(palm_facts, indent=2)}"
-        
+            palm_section = f"\n\nPalm features:\n{json.dumps(palm_facts, separators=(',', ':'))}"
         user_content = f"""Create a complete personalised reading:
 
-User's Question: "{question}"
+User's Question: \"{question}\"
 
 Primary anchors (must use these first):
 {primary_anchors}
@@ -577,71 +491,33 @@ All anchors available:
 {self._format_anchors(anchors)}
 
 Astrology Data:
-{json.dumps(astrology_facts, indent=2)}
+{json.dumps(astrology_facts, separators=(',', ':'))}
 
 Tarot Cards:
-{json.dumps(tarot_cards, indent=2)}{palm_section}
+{json.dumps(tarot_cards, separators=(',', ':'))}{palm_section}
 
 Generate the full reading following this flow schema and the grounding rules."""
-
         system, messages = self._build_messages(system_prompt, user_content)
-        
         try:
-            # Call Bedrock Converse API
-            response = self.client.converse(
-                modelId=self.full_model,
-                messages=messages,
-                system=[{"text": system}],
-                inferenceConfig={
-                    "maxTokens": self.full_max_tokens,
-                    "temperature": 0.78,
-                    "topP": 0.92
-                }
-            )
-            
-            # Extract response
+            response = self.client.converse(modelId=self.full_model, messages=messages, system=[{"text": system}], inferenceConfig={"maxTokens": self.full_max_tokens, "temperature": 0.78, "topP": 0.92})
             output_text = response['output']['message']['content'][0]['text']
-            
-            # Parse sections
             sections = self._parse_sections_by_schema(output_text, schema)
-            
-            # Extract token usage
             usage = response.get('usage', {})
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
-            
-            # Calculate cost
             cost = self._calculate_cost(self.full_model, input_tokens, output_tokens)
-            
-            return {
-                'sections': sections,
-                'full_text': output_text,
-                'input_tokens': input_tokens,
-                'output_tokens': output_tokens,
-                'cost_usd': cost,
-                'model': self.full_model
-            }
-            
+            return {'sections': sections, 'full_text': output_text, 'input_tokens': input_tokens, 'output_tokens': output_tokens, 'cost_usd': cost, 'model': self.full_model}
         except Exception as e:
             raise RuntimeError(f"Bedrock full reading generation failed: {str(e)}")
 
-    def generate_lunar_forecast(
-        self,
-        question: str,
-        zodiac: Dict[str, str],
-        year_label: str
-    ) -> Dict[str, Any]:
-        """
-        Generate a Lunar New Year forecast section.
-        """
+    def generate_lunar_forecast(self, question: str, zodiac: Dict[str, str], year_label: str) -> Dict[str, Any]:
         reference_block = self._build_reference_block()
-
         system_prompt = f"""You are an insightful metaphysical reader writing a Lunar New Year forecast add-on.
 
 CRITICAL RULES:
 - 2-3 paragraphs
 - Grounded, opportunity-focused, with directional forecasting
-- Include at least one concrete "expect / likely" forward-looking line
+- Include at least one concrete \"expect / likely\" forward-looking line
 - Be specific to the user's zodiac animal + element
 - Keep one clear year theme and build around it
 - Avoid technical jargon and keep it human, direct, and relatable
@@ -652,55 +528,26 @@ CRITICAL RULES:
 TONE: Grounded, practical, bold, with gentle grit.
 
 {reference_block}"""
-
         user_content = f"""Write a Lunar New Year forecast add-on.
 
-User question/intention: "{question}"
-Chinese zodiac: {json.dumps(zodiac)}
+User question/intention: \"{question}\"
+Chinese zodiac: {json.dumps(zodiac, separators=(',', ':'))}
 Year label: {year_label}
 
 Focus on themes, growth areas, energies to work with, and challenges to navigate."""
-
         system, messages = self._build_messages(system_prompt, user_content)
-
         try:
-            response = self.client.converse(
-                modelId=self.full_model,
-                messages=messages,
-                system=[{"text": system}],
-                inferenceConfig={
-                    "maxTokens": 450,
-                    "temperature": 0.76,
-                    "topP": 0.92
-                }
-            )
-
+            response = self.client.converse(modelId=self.full_model, messages=messages, system=[{"text": system}], inferenceConfig={"maxTokens": 450, "temperature": 0.76, "topP": 0.92})
             output_text = response['output']['message']['content'][0]['text']
             usage = response.get('usage', {})
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
             cost = self._calculate_cost(self.full_model, input_tokens, output_tokens)
-
-            return {
-                "text": output_text.strip(),
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "cost_usd": cost,
-                "model": self.full_model
-            }
+            return {"text": output_text.strip(), "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost, "model": self.full_model}
         except Exception as e:
             raise RuntimeError(f"Bedrock lunar forecast generation failed: {str(e)}")
 
-    def generate_compatibility_preview(
-        self,
-        person1: Dict[str, Any],
-        person2: Dict[str, Any],
-        synastry: Dict[str, Any],
-        zodiac_compatibility: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Generate compatibility preview teaser using Nova Lite.
-        """
+    def generate_compatibility_preview(self, person1: Dict[str, Any], person2: Dict[str, Any], synastry: Dict[str, Any], zodiac_compatibility: Dict[str, Any]) -> Dict[str, Any]:
         reference_block = self._build_reference_block()
         system_prompt = f"""You are an insightful metaphysical reader providing compatibility preview teasers.
 
@@ -718,53 +565,25 @@ TONE: Grounded, bold, intriguing, relatable.
 {self._prediction_contract(short_form=True)}
 
 {reference_block}"""
-
         user_content = f"""Generate a compatibility preview teaser:
 
-Person 1: {json.dumps(person1, indent=2)}
-Person 2: {json.dumps(person2, indent=2)}
-Synastry: {json.dumps(synastry, indent=2)}
-Chinese zodiac harmony: {json.dumps(zodiac_compatibility, indent=2)}"""
-
+Person 1: {json.dumps(person1, separators=(',', ':'))}
+Person 2: {json.dumps(person2, separators=(',', ':'))}
+Synastry: {json.dumps(synastry, separators=(',', ':'))}
+Chinese zodiac harmony: {json.dumps(zodiac_compatibility, separators=(',', ':'))}"""
         system, messages = self._build_messages(system_prompt, user_content)
-
         try:
-            response = self.client.converse(
-                modelId=self.preview_model,
-                messages=messages,
-                system=[{"text": system}],
-                inferenceConfig={
-                    "maxTokens": self.preview_max_tokens,
-                    "temperature": 0.7,
-                    "topP": 0.92
-                }
-            )
+            response = self.client.converse(modelId=self.preview_model, messages=messages, system=[{"text": system}], inferenceConfig={"maxTokens": self.preview_max_tokens, "temperature": 0.7, "topP": 0.92})
             output_text = response['output']['message']['content'][0]['text']
             usage = response.get('usage', {})
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
             cost = self._calculate_cost(self.preview_model, input_tokens, output_tokens)
-
-            return {
-                "teaser_text": output_text.strip(),
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "cost_usd": cost,
-                "model": self.preview_model
-            }
+            return {"teaser_text": output_text.strip(), "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost, "model": self.preview_model}
         except Exception as e:
             raise RuntimeError(f"Bedrock compatibility preview failed: {str(e)}")
 
-    def generate_compatibility_reading(
-        self,
-        person1: Dict[str, Any],
-        person2: Dict[str, Any],
-        synastry: Dict[str, Any],
-        zodiac_compatibility: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Generate a 6-section compatibility reading using Nova Pro.
-        """
+    def generate_compatibility_reading(self, person1: Dict[str, Any], person2: Dict[str, Any], synastry: Dict[str, Any], zodiac_compatibility: Dict[str, Any]) -> Dict[str, Any]:
         reference_block = self._build_reference_block()
         system_prompt = f"""You are an insightful metaphysical reader creating a compatibility reading.
 
@@ -812,108 +631,55 @@ Output ONLY the reading text in this format:
 [text]
 
 {reference_block}"""
-
         user_content = f"""Create a compatibility reading.
 
-Person 1: {json.dumps(person1, indent=2)}
-Person 2: {json.dumps(person2, indent=2)}
-Synastry: {json.dumps(synastry, indent=2)}
-Chinese zodiac harmony: {json.dumps(zodiac_compatibility, indent=2)}"""
-
+Person 1: {json.dumps(person1, separators=(',', ':'))}
+Person 2: {json.dumps(person2, separators=(',', ':'))}
+Synastry: {json.dumps(synastry, separators=(',', ':'))}
+Chinese zodiac harmony: {json.dumps(zodiac_compatibility, separators=(',', ':'))}"""
         system, messages = self._build_messages(system_prompt, user_content)
-
         try:
-            response = self.client.converse(
-                modelId=self.full_model,
-                messages=messages,
-                system=[{"text": system}],
-                inferenceConfig={
-                    "maxTokens": self.full_max_tokens,
-                    "temperature": 0.78,
-                    "topP": 0.92
-                }
-            )
+            response = self.client.converse(modelId=self.full_model, messages=messages, system=[{"text": system}], inferenceConfig={"maxTokens": self.full_max_tokens, "temperature": 0.78, "topP": 0.92})
             output_text = response['output']['message']['content'][0]['text']
             sections = self._parse_compatibility_sections(output_text)
             usage = response.get('usage', {})
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
             cost = self._calculate_cost(self.full_model, input_tokens, output_tokens)
-
-            return {
-                "sections": sections,
-                "full_text": output_text,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "cost_usd": cost,
-                "model": self.full_model
-            }
+            return {"sections": sections, "full_text": output_text, "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost, "model": self.full_model}
         except Exception as e:
             raise RuntimeError(f"Bedrock compatibility reading failed: {str(e)}")
 
-    def generate_blessing(
-        self,
-        question: str,
-        themes: List[str]
-    ) -> Dict[str, Any]:
-        """
-        Generate a short blessing using Nova Lite.
-        """
+    def generate_blessing(self, question: str, themes: List[str]) -> Dict[str, Any]:
         system_prompt = f"""You are writing a short blessing.
 
 CRITICAL RULES:
 - 2-3 sentences, concise and warm
 - Grounded, hopeful, not religious
-- Use "may" language, no predictions
+- Use \"may\" language, no predictions
 - Avoid technical or clinical language
 - Keep it human and real, not greeting-card generic
 
 TONE: Warm, grounded, hopeful, with personality.
 
 {self._voice_contract(short_form=True)}"""
-
         user_content = f"""Write a blessing based on this:
 
-Question/intention: "{question}"
-Themes: {json.dumps(themes)}"""
-
+Question/intention: \"{question}\"
+Themes: {json.dumps(themes, separators=(',', ':'))}"""
         system, messages = self._build_messages(system_prompt, user_content)
-
         try:
-            response = self.client.converse(
-                modelId=self.preview_model,
-                messages=messages,
-                system=[{"text": system}],
-                inferenceConfig={
-                    "maxTokens": 180,
-                    "temperature": 0.7,
-                    "topP": 0.9
-                }
-            )
+            response = self.client.converse(modelId=self.preview_model, messages=messages, system=[{"text": system}], inferenceConfig={"maxTokens": 180, "temperature": 0.7, "topP": 0.9})
             output_text = response['output']['message']['content'][0]['text']
             usage = response.get('usage', {})
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
             cost = self._calculate_cost(self.preview_model, input_tokens, output_tokens)
-
-            return {
-                "blessing_text": output_text.strip(),
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "cost_usd": cost,
-                "model": self.preview_model
-            }
+            return {"blessing_text": output_text.strip(), "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost, "model": self.preview_model}
         except Exception as e:
             raise RuntimeError(f"Bedrock blessing failed: {str(e)}")
 
-    def generate_feng_shui_analysis(
-        self,
-        context: Dict[str, Any],
-        vision_analysis: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Generate Feng Shui analysis using Nova Pro.
-        """
+    def generate_feng_shui_analysis(self, context: Dict[str, Any], vision_analysis: Dict[str, Any]) -> Dict[str, Any]:
         system_prompt = f"""You are a Feng Shui consultant analyzing this space.
 
 ANALYSIS FRAMEWORK:
@@ -953,72 +719,31 @@ OUTPUT FORMAT:
 ---GUIDANCE---
 [text]
 """
-
-        user_content = f"""Context: {json.dumps(context, indent=2)}
+        user_content = f"""Context: {json.dumps(context, separators=(',', ':'))}
 
 Vision analysis (JSON):
-{json.dumps(vision_analysis, indent=2)}"""
-
+{json.dumps(vision_analysis, separators=(',', ':'))}"""
         system, messages = self._build_messages(system_prompt, user_content)
-
         try:
-            response = self.client.converse(
-                modelId=self.full_model,
-                messages=messages,
-                system=[{"text": system}],
-                inferenceConfig={
-                    "maxTokens": self.full_max_tokens,
-                    "temperature": 0.65,
-                    "topP": 0.9
-                }
-            )
+            response = self.client.converse(modelId=self.full_model, messages=messages, system=[{"text": system}], inferenceConfig={"maxTokens": self.full_max_tokens, "temperature": 0.65, "topP": 0.9})
             output_text = response['output']['message']['content'][0]['text']
             sections = self._parse_feng_shui_sections(output_text)
             usage = response.get('usage', {})
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
             cost = self._calculate_cost(self.full_model, input_tokens, output_tokens)
-
-            return {
-                "sections": sections,
-                "full_text": output_text,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "cost_usd": cost,
-                "model": self.full_model
-            }
+            return {"sections": sections, "full_text": output_text, "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost, "model": self.full_model}
         except Exception as e:
             raise RuntimeError(f"Bedrock feng shui analysis failed: {str(e)}")
-    
+
     def _parse_sections(self, text: str) -> List[Dict[str, str]]:
-        """
-        Parse the delimited output into structured sections.
-        
-        Args:
-            text: Raw output text with section delimiters
-            
-        Returns:
-            List of section dicts with id and text
-        """
-        section_map = {
-            'OPENING_INVOCATION': 'opening_invocation',
-            'ASTROLOGICAL_FOUNDATION': 'astrological_foundation',
-            'TAROT_NARRATIVE': 'tarot_narrative',
-            'PALM_INSIGHT': 'palm_insight',
-            'INTEGRATED_SYNTHESIS': 'integrated_synthesis',
-            'REFLECTIVE_GUIDANCE': 'reflective_guidance',
-            'CLOSING_PROMPT': 'closing_prompt'
-        }
-        
+        section_map = {'OPENING_INVOCATION': 'opening_invocation', 'ASTROLOGICAL_FOUNDATION': 'astrological_foundation', 'TAROT_NARRATIVE': 'tarot_narrative', 'PALM_INSIGHT': 'palm_insight', 'INTEGRATED_SYNTHESIS': 'integrated_synthesis', 'REFLECTIVE_GUIDANCE': 'reflective_guidance', 'CLOSING_PROMPT': 'closing_prompt'}
         sections = []
         current_section = None
         current_text = []
-        
         for line in text.split('\n'):
-            # Check if line is a delimiter
             for delimiter, section_id in section_map.items():
                 if f"---{delimiter}---" in line:
-                    # Save previous section if exists
                     if current_section:
                         raw_text = '\n'.join(current_text).strip()
                         deep_text = None
@@ -1026,23 +751,16 @@ Vision analysis (JSON):
                             parts = raw_text.split("DEEP_INSIGHT:", 1)
                             raw_text = parts[0].strip()
                             deep_text = parts[1].strip()
-                        section_payload = {
-                            'id': current_section,
-                            'text': raw_text
-                        }
+                        section_payload = {'id': current_section, 'text': raw_text}
                         if deep_text:
                             section_payload['deep_text'] = deep_text
                         sections.append(section_payload)
-                    # Start new section
                     current_section = section_id
                     current_text = []
                     break
             else:
-                # Not a delimiter, add to current section
                 if current_section:
                     current_text.append(line)
-        
-        # Save last section
         if current_section:
             raw_text = '\n'.join(current_text).strip()
             deep_text = None
@@ -1050,30 +768,17 @@ Vision analysis (JSON):
                 parts = raw_text.split("DEEP_INSIGHT:", 1)
                 raw_text = parts[0].strip()
                 deep_text = parts[1].strip()
-            section_payload = {
-                'id': current_section,
-                'text': raw_text
-            }
+            section_payload = {'id': current_section, 'text': raw_text}
             if deep_text:
                 section_payload['deep_text'] = deep_text
             sections.append(section_payload)
-        
         return sections
 
     def _parse_compatibility_sections(self, text: str) -> List[Dict[str, str]]:
-        section_map = {
-            'OPENING': 'opening',
-            'INDIVIDUAL_ESSENCES': 'individual_essences',
-            'ASTROLOGICAL_SYNASTRY': 'astrological_synastry',
-            'ZODIAC_HARMONY': 'zodiac_harmony',
-            'SHARED_GROWTH_EDGES': 'shared_growth_edges',
-            'GUIDANCE': 'guidance'
-        }
-
+        section_map = {'OPENING': 'opening', 'INDIVIDUAL_ESSENCES': 'individual_essences', 'ASTROLOGICAL_SYNASTRY': 'astrological_synastry', 'ZODIAC_HARMONY': 'zodiac_harmony', 'SHARED_GROWTH_EDGES': 'shared_growth_edges', 'GUIDANCE': 'guidance'}
         sections = []
         current_section = None
         current_text = []
-
         for line in text.split('\n'):
             for delimiter, section_id in section_map.items():
                 if f"---{delimiter}---" in line:
@@ -1086,27 +791,16 @@ Vision analysis (JSON):
             else:
                 if current_section:
                     current_text.append(line)
-
         if current_section:
             raw_text = '\n'.join(current_text).strip()
             sections.append({'id': current_section, 'text': raw_text})
-
         return sections
 
     def _parse_feng_shui_sections(self, text: str) -> List[Dict[str, str]]:
-        section_map = {
-            'OVERVIEW': 'overview',
-            'BAGUA_MAP': 'bagua_map',
-            'ENERGY_FLOW': 'energy_flow',
-            'RECOMMENDATIONS': 'recommendations',
-            'PRIORITY_ACTIONS': 'priority_actions',
-            'GUIDANCE': 'guidance'
-        }
-
+        section_map = {'OVERVIEW': 'overview', 'BAGUA_MAP': 'bagua_map', 'ENERGY_FLOW': 'energy_flow', 'RECOMMENDATIONS': 'recommendations', 'PRIORITY_ACTIONS': 'priority_actions', 'GUIDANCE': 'guidance'}
         sections = []
         current_section = None
         current_text = []
-
         for line in text.split('\n'):
             for delimiter, section_id in section_map.items():
                 if f"---{delimiter}---" in line:
@@ -1119,19 +813,16 @@ Vision analysis (JSON):
             else:
                 if current_section:
                     current_text.append(line)
-
         if current_section:
             raw_text = '\n'.join(current_text).strip()
             sections.append({'id': current_section, 'text': raw_text})
-
         return sections
 
 
-# Singleton instance
 _bedrock_service = None
 
+
 def get_bedrock_service() -> BedrockService:
-    """Get or create singleton Bedrock service instance."""
     global _bedrock_service
     if _bedrock_service is None:
         _bedrock_service = BedrockService()
