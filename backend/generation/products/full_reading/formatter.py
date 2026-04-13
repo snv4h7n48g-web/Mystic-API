@@ -415,7 +415,7 @@ def build_full_reading_payload(
                 body=palm_revelation,
                 fallback_headline='Your palm shows how this question is being carried in your system.',
                 default_expanded=False,
-                evidence_title='Palm signals',
+                evidence_title='Supporting palm details',
                 evidence_items=palm_feature_summaries,
                 palm_signals=palm_signals,
             )

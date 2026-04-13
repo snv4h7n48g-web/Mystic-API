@@ -1,7 +1,8 @@
 from generation.product_contracts import get_product_contract
 from generation.products.tarot.mapper import map_tarot_reading
+from generation.products.tarot.reading import build_tarot_reading_payload
 from generation.validators import validate_product_payload
-from generation.types import NormalizedMysticOutput
+from generation.types import GenerationMetadata, NormalizedMysticOutput
 
 
 def test_tarot_contract_uses_tarot_specific_prompt_ids() -> None:
@@ -118,6 +119,38 @@ def test_tarot_validator_rejects_light_repetitive_card_restatement() -> None:
     assert result.passed is False
     assert 'tarot_narrative_missing_card_contribution_depth' in result.issues
 
+
+
+def _metadata() -> GenerationMetadata:
+    return GenerationMetadata(
+        persona_id='ancient_tarot_reader',
+        llm_profile_id='tarot_reading',
+        prompt_version='test',
+        model_id='test-model',
+        theme_tags=['tarot'],
+        headline='Tarot',
+    )
+
+
+def test_tarot_reading_payload_splits_summary_from_deeper_body() -> None:
+    payload = build_tarot_reading_payload(
+        normalized=NormalizedMysticOutput(
+            opening_hook='A tarot threshold is opening.',
+            current_pattern='A pause is becoming preparation.',
+            emotional_truth='You already know the pace needs to change.',
+            reading_opening='The spread opens like a lantern being raised in a dark room. It clarifies the choice without pretending the choice is easy.',
+            tarot_message='The Hermit in the present position slows the whole spread down and asks for deliberate distance from noise. Beside it, the Two of Wands shifts the message from withdrawal to planning, showing that solitude is meant to sharpen choice rather than delay it.',
+            signals_agree='Taken together, the cards show that clarity arrives when you stop treating urgency as proof and start treating perspective as evidence.',
+            what_this_is_asking_of_you='Let the pause become preparation instead of avoidance.',
+            next_return_invitation='Return after the stillness has had time to speak.',
+        ),
+        metadata=_metadata(),
+    )
+
+    narrative = next(section for section in payload['sections'] if section['id'] == 'tarot_narrative')
+    assert narrative['text'] == 'The Hermit in the present position slows the whole spread down and asks for deliberate distance from noise.'
+    assert 'Two of Wands shifts the message from withdrawal to planning' in narrative['detail']
+    assert narrative['detail'] != narrative['text']
 
 
 def test_tarot_validator_accepts_detailed_card_led_payload() -> None:

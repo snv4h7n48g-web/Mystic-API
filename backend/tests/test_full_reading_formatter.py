@@ -176,8 +176,10 @@ def test_build_full_reading_payload_upgrades_raw_palm_and_shallow_tarot_supporti
     tarot_section = next(section for section in payload['sections'] if section['id'] == 'tarot_message')
 
     assert 'Head Line speaks to decision-making style' in f"{palm_section['headline']} {palm_section['text']}"
+    assert palm_section['evidence']['title'] == 'Supporting palm details'
     assert 'present / crossing spread reads as movement between these card roles' in tarot_section['text']
     assert 'The Chariot in the present position contributes available momentum' in tarot_section['text']
+    assert 'Cards in view:' not in tarot_section['text']
 
 
 def test_validate_full_reading_payload_flags_shallow_tarot_and_raw_palm_labels() -> None:
