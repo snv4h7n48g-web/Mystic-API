@@ -227,6 +227,9 @@ class UserService:
     def set_subscription(self, user_id: str, subscription: Dict[str, Any]):
         """Persist subscription data in user metadata."""
         user = self.get_user_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+
         metadata = user.get("metadata") or {}
         metadata["subscription"] = subscription
         with engine.begin() as conn:
