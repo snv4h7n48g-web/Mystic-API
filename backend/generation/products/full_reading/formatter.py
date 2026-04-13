@@ -51,6 +51,18 @@ _PALM_ICON_MAP = {
     'Palm Shape': 'palm_shape',
     'Overall Palm Impression': 'overall_palm',
 }
+_PALM_MEANING_HINTS = {
+    'Heart Line': 'emotional expression, trust, and the way you let connection move through you',
+    'Head Line': 'decision-making style, mental pacing, and how tightly you manage uncertainty',
+    'Life Line': 'stamina, recovery, and how steadily you hold yourself through pressure',
+    'Fate Line': 'direction, duty, and the relationship between choice and external demands',
+    'Sun Line': 'visibility, confidence, and the way recognition affects your momentum',
+    'Relationship Line': 'intimacy patterns, attachment habits, and what partnership tends to mirror back',
+    'Palm Shape': 'your default temperament and the way you meet experience overall',
+    'Overall Palm Impression': 'your overall way of carrying stress, openness, and self-protection',
+    'Mount of Venus': 'warmth, attachment, appetite, and how strongly desire shapes your choices',
+    'Mount of Moon': 'imagination, sensitivity, and what your system absorbs from its environment',
+}
 
 
 def _clean(text: str | None) -> str:
@@ -141,6 +153,25 @@ def _tarot_cards_summary(tarot_payload: dict | None) -> str:
     return ', '.join(labels)
 
 
+def _palm_signal_meaning(label: str, observation: str, relevance: str) -> str:
+    meaning = _PALM_MEANING_HINTS.get(label, 'a deeper pattern in how this question is being carried')
+    observed = observation.casefold()
+    if any(token in observed for token in ['deep', 'clear', 'strong', 'long', 'defined']):
+        tone = 'shows the pattern is pronounced rather than faint'
+    elif any(token in observed for token in ['faint', 'light', 'fine', 'broken', 'fragmented', 'chained']):
+        tone = 'suggests the pattern is present but under strain or inconsistency'
+    elif any(token in observed for token in ['curved', 'open', 'wide', 'full', 'broad']):
+        tone = 'leans toward openness, response, and visible engagement'
+    elif any(token in observed for token in ['straight', 'tight', 'flat', 'narrow', 'stiff']):
+        tone = 'leans toward control, restraint, or emotional economy'
+    else:
+        tone = 'adds texture to the pattern rather than acting as neutral description'
+
+    if relevance:
+        return f"{label} speaks to {meaning}; this {tone}. In this question, it matters because {relevance.rstrip('.')} .".replace(' .', '.')
+    return f"{label} speaks to {meaning}; this {tone}."
+
+
 def _palm_signals(palm_features: list[dict] | None) -> list[dict]:
     summaries: list[dict] = []
     for feature in palm_features or []:
@@ -151,6 +182,7 @@ def _palm_signals(palm_features: list[dict] | None) -> list[dict]:
         value = _clean(feature.get('value') or feature.get('attribute') or feature.get('state') or feature.get('description') or feature.get('reading') or feature.get('summary'))
         relevance = _clean(feature.get('relevance') or feature.get('question_relevance') or feature.get('why_it_matters'))
         confidence = _clean(feature.get('confidence_label') or feature.get('confidence'))
+        interpretation = _palm_signal_meaning(pretty_label or raw_label, value, relevance) if (pretty_label or raw_label) else relevance
         if pretty_label or value or relevance:
             summaries.append({
                 'feature': pretty_label,
@@ -159,7 +191,7 @@ def _palm_signals(palm_features: list[dict] | None) -> list[dict]:
                 'observation': value,
                 'attribute': value,
                 'relevance': relevance,
-                'interpretation': relevance,
+                'interpretation': interpretation,
                 'confidence': confidence,
             })
     return summaries[:5]
@@ -168,6 +200,10 @@ def _palm_signals(palm_features: list[dict] | None) -> list[dict]:
 def _palm_features_summary(palm_features: list[dict] | None) -> list[str]:
     summaries: list[str] = []
     for signal in _palm_signals(palm_features):
+        meaning = _clean(signal.get('interpretation'))
+        if meaning:
+            summaries.append(meaning)
+            continue
         parts = [
             signal.get('display_name', '') or signal.get('feature', ''),
             signal.get('observation', ''),
@@ -254,6 +290,63 @@ def _build_section(
     return payload
 
 
+def _enrich_palm_revelation(*, palm_revelation: str, palm_signals: list[dict], question: str | None) -> str:
+    cleaned = _clean(palm_revelation)
+    if not palm_signals:
+        return cleaned
+    interpretive_lines = [_clean(signal.get('interpretation')) for signal in palm_signals if _clean(signal.get('interpretation'))]
+    if not cleaned:
+        base = ' '.join(interpretive_lines[:2]).strip()
+        if len(interpretive_lines) > 2:
+            base += ' Together, these signs describe the pattern your hand is repeating rather than a fixed fate.'
+        if question:
+            base += f' In relation to your question, the hand reads more like a mirror of your current pattern than a promise carved in stone.'
+        return base.strip()
+
+    lowered = cleaned.casefold()
+    if interpretive_lines and not any(phrase.casefold() in lowered for phrase in ['suggests', 'speaks to', 'matters because', 'points toward', 'shows the pattern']):
+        cleaned = f"{cleaned.rstrip('.')} . {' '.join(interpretive_lines[:2])}".replace(' .', '.')
+    return cleaned.strip()
+
+
+def _build_tarot_expansion(tarot_cards: list[dict], tarot_spread: str, question: str | None) -> str:
+    if not tarot_cards:
+        return ''
+    lines: list[str] = []
+    for card in tarot_cards[:3]:
+        name = card.get('card', '')
+        position = card.get('position', '')
+        interpretation = _clean(card.get('interpretation'))
+        question_link = _clean(card.get('question_link'))
+        if not name:
+            continue
+        position_text = f" in the {position} position" if position else ''
+        if interpretation and question_link:
+            lines.append(f"{name}{position_text} contributes {interpretation.rstrip('.')}; in this reading, {question_link.rstrip('.')}.")
+        elif interpretation:
+            lines.append(f"{name}{position_text} contributes {interpretation.rstrip('.')}, giving this spread a distinct pressure point instead of a generic mood.")
+        elif question_link:
+            lines.append(f"{name}{position_text} matters because {question_link.rstrip('.')}.")
+    if len(lines) >= 2:
+        bridge = f"Together, the {tarot_spread} spread reads as movement between these card roles rather than three separate meanings." if tarot_spread else 'Together, the cards read as an interaction rather than a stack of isolated keywords.'
+        if question:
+            bridge += f" That interaction speaks directly to the question by showing where momentum, resistance, and choice are meeting."
+        lines.append(bridge)
+    return ' '.join(lines).strip()
+
+
+def _enrich_tarot_message(*, tarot_message: str, tarot_cards: list[dict], tarot_spread: str, question: str | None) -> str:
+    cleaned = _clean(tarot_message)
+    expansion = _build_tarot_expansion(tarot_cards, tarot_spread, question)
+    if not cleaned:
+        return expansion
+    if not expansion:
+        return cleaned
+    if len(cleaned.split()) < 45 or expansion.casefold() not in cleaned.casefold():
+        return f"{cleaned.rstrip('.')} . {expansion}".replace(' .', '.').strip()
+    return cleaned
+
+
 def build_full_reading_payload(
     *,
     normalized: NormalizedMysticOutput,
@@ -292,14 +385,18 @@ def build_full_reading_payload(
 
     if not palm_revelation and include_palm_section:
         if palm_feature_summaries:
-            palm_revelation = 'Palm signals that stood out: ' + '; '.join(palm_feature_summaries)
+            palm_revelation = ' '.join(palm_feature_summaries[:2]).strip()
+            if len(palm_feature_summaries) > 2:
+                palm_revelation += ' Together, these signs suggest the hand is describing a lived pattern, not just listing physical traits.'
             if question:
-                palm_revelation += f'. In relation to your question, these features point toward how you are carrying this pattern rather than promising fixed certainty.'
+                palm_revelation += f' In relation to your question, these features point toward how you are carrying this pattern rather than promising fixed certainty.'
         else:
             palm_revelation = 'Your palm adds a subtle layer here rather than a dramatic override. The visible hand signals are suggestive, not absolute, so this reading treats palm as supporting evidence instead of forced precision.'
+    palm_revelation = _enrich_palm_revelation(palm_revelation=palm_revelation, palm_signals=palm_signals, question=question)
 
     if tarot_cards_summary and tarot_cards_summary.casefold() not in tarot_message.casefold():
         tarot_message = f'Cards in view: {tarot_cards_summary}. {tarot_message}'.strip()
+    tarot_message = _enrich_tarot_message(tarot_message=tarot_message, tarot_cards=tarot_cards, tarot_spread=tarot_spread, question=question)
 
     sections = [
         _build_section(

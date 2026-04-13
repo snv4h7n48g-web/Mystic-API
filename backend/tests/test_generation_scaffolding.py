@@ -22,6 +22,23 @@ def test_compose_generation_prompt_includes_persona_flow_and_schema() -> None:
     assert any("Return JSON" in message for message in prompt["messages"])
 
 
+def test_compose_generation_prompt_compacts_context_json() -> None:
+    prompt = compose_generation_prompt(
+        persona_id="ancient_tarot_reader",
+        flow_id="tarot_reading",
+        continuity_context={"recent": ["tarot_solo"], "latest_flow_type": "tarot_solo"},
+        domain_context={"question": "Should I move forward?", "tarot": {"cards": ["The Chariot", "Two of Swords"]}},
+        contract_instruction="tarot contract",
+    )
+
+    continuity_message = next(message for message in prompt["messages"] if message.startswith("CONTINUITY_CONTEXT:\n"))
+    domain_message = next(message for message in prompt["messages"] if message.startswith("DOMAIN_CONTEXT:\n"))
+
+    assert "\n  " not in continuity_message
+    assert "\n  " not in domain_message
+    assert '{"latest_flow_type":"tarot_solo","recent":["tarot_solo"]}' in continuity_message
+
+
 def test_parse_normalized_output_accepts_valid_json() -> None:
     output = parse_normalized_output(
         """

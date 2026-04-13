@@ -139,7 +139,45 @@ def test_build_full_reading_payload_humanizes_palm_signals_and_rich_tarot_eviden
     tarot_card = next(section for section in payload['sections'] if section['id'] == 'tarot_message')['evidence']['tarot']['cards'][0]
     assert palm_signal['display_name'] == 'Heart Line'
     assert palm_signal['icon_key'] == 'heart_line'
+    assert 'speaks to emotional expression' in palm_signal['interpretation']
     assert tarot_card['question_link'] == 'It shows the path is ready to move if you claim it.'
+
+
+def test_build_full_reading_payload_upgrades_raw_palm_and_shallow_tarot_supporting_detail() -> None:
+    payload = build_full_reading_payload(
+        normalized=NormalizedMysticOutput(
+            opening_hook='A threshold is here.',
+            current_pattern='You already know this question is active.',
+            emotional_truth='The tension is between caution and momentum.',
+            reading_opening='A threshold is here. The pattern is ready to move.',
+            palm_revelation='',
+            tarot_message='Movement and hesitation are both present.',
+            signals_agree='The pattern is asking for a direct step.',
+            what_this_is_asking_of_you='Stop treating delay as wisdom.',
+            your_next_move='Send the message today.',
+            next_return_invitation='Return after the move lands.',
+        ),
+        metadata=_metadata(),
+        question='Should I move forward?',
+        tarot_payload={
+            'spread': 'present / crossing',
+            'cards': [
+                {'card': 'The Chariot', 'position': 'present', 'meaning': 'available momentum', 'question_link': 'the path is ready if you claim it'},
+                {'card': 'Two of Swords', 'position': 'crossing', 'meaning': 'protective stalemate', 'question_link': 'delay is acting like self-protection'},
+            ],
+        },
+        palm_features=[
+            {'label': 'head_line', 'description': 'straight and clear', 'relevance': 'you are controlling uncertainty through analysis', 'confidence_label': 'high'},
+        ],
+        include_palm=True,
+    )
+
+    palm_section = next(section for section in payload['sections'] if section['id'] == 'palm_revelation')
+    tarot_section = next(section for section in payload['sections'] if section['id'] == 'tarot_message')
+
+    assert 'Head Line speaks to decision-making style' in f"{palm_section['headline']} {palm_section['text']}"
+    assert 'present / crossing spread reads as movement between these card roles' in tarot_section['text']
+    assert 'The Chariot in the present position contributes available momentum' in tarot_section['text']
 
 
 def test_validate_full_reading_payload_flags_shallow_tarot_and_raw_palm_labels() -> None:

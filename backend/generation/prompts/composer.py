@@ -11,6 +11,10 @@ from .persona_prompts import PERSONA_PROMPTS
 PROMPT_VERSION = "mystic-v1"
 
 
+def _compact_json(data: Any) -> str:
+    return json.dumps(data, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+
+
 def compose_generation_prompt(
     *,
     persona_id: str,
@@ -22,8 +26,8 @@ def compose_generation_prompt(
 ) -> dict[str, Any]:
     persona_prompt = PERSONA_PROMPTS[persona_id]
     flow_prompt = FLOW_PROMPTS[flow_id]
-    continuity_blob = json.dumps(continuity_context or {}, indent=2, sort_keys=True)
-    domain_blob = json.dumps(domain_context, indent=2, sort_keys=True)
+    continuity_blob = _compact_json(continuity_context or {})
+    domain_blob = _compact_json(domain_context)
 
     messages = [
         f"PERSONA:\n{persona_prompt}",

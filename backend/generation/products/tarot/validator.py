@@ -37,10 +37,8 @@ def _text_for(sections: list[dict], *ids: str) -> str:
     return ""
 
 
-
 def _content_tokens(text: str) -> list[str]:
     return [token for token in _WORD_RE.findall((text or '').casefold()) if token not in _STOPWORDS]
-
 
 
 def _is_too_similar(a: str, b: str) -> bool:
@@ -57,10 +55,13 @@ def _is_too_similar(a: str, b: str) -> bool:
     return overlap >= max(4, int(shortest * 0.8))
 
 
-
 def _word_count(text: str) -> int:
     return len(_content_tokens(text))
 
+
+def _sentence_count(text: str) -> int:
+    parts = [part.strip() for part in re.split(r'(?<=[.!?])\s+', (text or '').strip()) if part.strip()]
+    return len(parts)
 
 
 def _has_actionable_guidance(text: str) -> bool:
@@ -69,6 +70,16 @@ def _has_actionable_guidance(text: str) -> bool:
         return True
     return bool(re.search(r'\b(?:try|let|keep|notice|consider|avoid|protect|write|name|ask|choose|take)\b', lowered))
 
+
+def _has_card_level_depth(text: str) -> bool:
+    lowered = (text or '').casefold()
+    card_hits = sum(1 for marker in CARD_MARKERS if marker in lowered)
+    position_hits = sum(1 for marker in SYMBOLIC_MARKERS if marker in lowered)
+    interpretation_hits = sum(1 for marker in ['suggests', 'reveals', 'asks', 'warns', 'shows', 'showing', 'points', 'because', 'together', 'while', 'whereas'] if marker in lowered)
+    sentences = _sentence_count(text)
+    if card_hits >= 2 and position_hits >= 2 and interpretation_hits >= 3 and sentences >= 3:
+        return True
+    return card_hits >= 1 and position_hits >= 2 and interpretation_hits >= 1 and _word_count(text) >= 12 and sentences >= 1
 
 
 def validate_tarot_payload(payload: dict) -> list[str]:
@@ -98,6 +109,8 @@ def validate_tarot_payload(payload: dict) -> list[str]:
         issues.append("tarot_narrative_too_shallow")
     if card_hits < 2 and structure_hits < 2:
         issues.append("tarot_narrative_under_grounded")
+    if not _has_card_level_depth(narrative):
+        issues.append("tarot_narrative_missing_card_contribution_depth")
     if any(marker in guidance.casefold() for marker in _GENERIC_FILLER_MARKERS):
         issues.append("tarot_guidance_generic_filler")
     if guidance and _word_count(guidance) < 10:

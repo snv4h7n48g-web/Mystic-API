@@ -87,6 +87,36 @@ def test_tarot_validator_rejects_shallow_narrative_and_guidance() -> None:
     assert 'tarot_guidance_too_shallow' in result.issues
     assert 'tarot_guidance_generic_filler' in result.issues
     assert 'tarot_guidance_missing_action' in result.issues
+    assert 'tarot_narrative_missing_card_contribution_depth' in result.issues
+
+
+
+def test_tarot_validator_rejects_light_repetitive_card_restatement() -> None:
+    payload = {
+        'sections': [
+            {
+                'id': 'opening_invocation',
+                'text': 'The spread opens with pressure around a decision that already has emotional weight.',
+            },
+            {
+                'id': 'tarot_narrative',
+                'text': 'The Chariot and Two of Swords appear in the spread. The Chariot means movement and Two of Swords means hesitation. The spread is about movement and hesitation.',
+            },
+            {
+                'id': 'integrated_synthesis',
+                'text': 'Together the cards point to a decision you keep delaying because acting would make the truth visible.',
+            },
+            {
+                'id': 'reflective_guidance',
+                'text': 'Name the decision in one sentence, then send one message before tonight ends so delay stops pretending to be wisdom.',
+            },
+        ]
+    }
+
+    result = validate_product_payload('tarot', payload)
+
+    assert result.passed is False
+    assert 'tarot_narrative_missing_card_contribution_depth' in result.issues
 
 
 
