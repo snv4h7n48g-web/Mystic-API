@@ -116,9 +116,11 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
     metadata = payload.get('metadata') if isinstance(payload.get('metadata'), dict) else {}
     snapshot = payload.get('snapshot') if isinstance(payload.get('snapshot'), dict) else {}
     include_palm = metadata.get('includes_palm') is True or (metadata.get('modalities') or {}).get('includes_palm') is True
+    question = str(metadata.get('question') or '').strip()
 
     asking_section = _section_for(sections, 'what_this_is_asking_of_you')
     next_move_section = _section_for(sections, 'your_next_move')
+    astro_section = _section_for(sections, 'astrological_foundation')
     palm_section = _section_for(sections, 'palm_revelation', 'palm_insight')
     tarot_section = _section_for(sections, 'tarot_message', 'tarot_narrative')
     opening_section = _section_for(sections, 'reading_opening', 'opening_hook', 'opening_invocation')
@@ -126,6 +128,7 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
 
     asking = _text_for(sections, 'what_this_is_asking_of_you')
     next_move = _text_for(sections, 'your_next_move')
+    astro = _text_for(sections, 'astrological_foundation')
     legacy_guidance = _text_for(sections, 'practical_guidance', 'reflective_guidance')
     opening = _text_for(sections, 'reading_opening', 'opening_hook', 'opening_invocation')
     palm = _text_for(sections, 'palm_revelation', 'palm_insight')
@@ -142,6 +145,8 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
 
     if not opening:
         issues.append('full_reading_missing_opening')
+    if not astro:
+        issues.append('full_reading_missing_astrology_section')
     if include_palm and not palm:
         issues.append('full_reading_missing_palm_section')
     if not tarot:
@@ -155,6 +160,7 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
 
     for section_id, text in {
         'reading_opening': opening,
+        'astrological_foundation': astro,
         'palm_revelation': palm,
         'tarot_message': tarot,
         'signals_agree': synthesis,
@@ -187,6 +193,12 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
         elif normalized_next_move and normalized_next_move in normalized_asking:
             issues.append('full_reading_overlapping_payoff_sections')
 
+    if astro:
+        astro_lowered = astro.casefold()
+        astrology_markers = ['sun', 'moon', 'rising', 'chart', 'placement', 'aspect', 'element', 'planet', 'sign']
+        if not any(marker in astro_lowered for marker in astrology_markers):
+            issues.append('full_reading_astrology_missing_chart_language')
+
     if include_palm and palm:
         lowered = palm.casefold()
         palm_evidence = palm_section.get('evidence') if isinstance(palm_section.get('evidence'), dict) else {}
@@ -194,6 +206,7 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
         section_palm = (palm_evidence.get('palm') or {}) if isinstance(palm_evidence.get('palm'), dict) else {}
         metadata_palm = (metadata_evidence.get('palm') or {}) if isinstance(metadata_evidence.get('palm'), dict) else {}
         palm_signals = section_palm.get('signals') or metadata_palm.get('signals')
+        palm_question_relevance = str(section_palm.get('question_relevance') or metadata_palm.get('question_relevance') or '').strip()
         evidence_items = palm_evidence.get('items') if isinstance(palm_evidence.get('items'), list) else []
         if not any(marker in lowered for marker in _PALM_MARKERS) and not palm_signals and not evidence_items:
             issues.append('full_reading_palm_section_missing_feature_evidence')
@@ -204,6 +217,8 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
                 issues.append('full_reading_palm_section_missing_signal_state')
             if not all(_is_human_readable_label(str((signal.get('display_name') or signal.get('feature') or ''))) for signal in palm_signals if isinstance(signal, dict)):
                 issues.append('full_reading_palm_section_non_human_labels')
+        if question and palm_question_relevance and _normalize_for_compare(palm_question_relevance) == _normalize_for_compare(question):
+            issues.append('full_reading_palm_question_relevance_too_literal')
         if not _has_interpretive_meaning(palm):
             issues.append('full_reading_palm_section_missing_interpretive_meaning')
 
@@ -244,6 +259,8 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
         issues.append('full_reading_palm_synthesis_repetition')
     if opening and synthesis and _is_too_similar(opening, synthesis):
         issues.append('full_reading_opening_synthesis_repetition')
+    if astro and synthesis and _is_too_similar(astro, synthesis):
+        issues.append('full_reading_astrology_synthesis_repetition')
 
     snapshot_values = [
         str(snapshot.get('core_theme', '') or '').strip(),
@@ -253,7 +270,7 @@ def validate_full_reading_payload(payload: dict) -> list[str]:
     if any(snapshot_values):
         if not all(snapshot_values):
             issues.append('full_reading_incomplete_snapshot')
-        body_sections = [text for text in [opening, palm, tarot, synthesis, asking, next_move] if text]
+        body_sections = [text for text in [opening, astro, palm, tarot, synthesis, asking, next_move] if text]
         for key, value in [('core_theme', snapshot_values[0]), ('main_tension', snapshot_values[1]), ('best_next_move', snapshot_values[2])]:
             if not value:
                 continue

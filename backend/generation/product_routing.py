@@ -74,7 +74,7 @@ PRODUCT_ROUTES: dict[str, ProductRoute] = {
         full_model_id=_env("MYSTIC_ROUTE_TAROT_FULL_MODEL", DEFAULT_ANTHROPIC_TEXT_MODEL),
         fallback_model_id=_env("MYSTIC_ROUTE_TAROT_FALLBACK_MODEL", DEFAULT_NOVA_FULL_MODEL),
         preview_max_tokens=800,
-        full_max_tokens=1700,
+        full_max_tokens=2200,
         persona_hint="ancient_tarot_reader",
     ),
     "full_reading": ProductRoute(
@@ -85,7 +85,7 @@ PRODUCT_ROUTES: dict[str, ProductRoute] = {
         full_model_id=_env("MYSTIC_ROUTE_FULL_READING_FULL_MODEL", DEFAULT_ANTHROPIC_TEXT_MODEL),
         fallback_model_id=_env("MYSTIC_ROUTE_FULL_READING_FALLBACK_MODEL", DEFAULT_NOVA_FULL_MODEL),
         preview_max_tokens=900,
-        full_max_tokens=2400,
+        full_max_tokens=3200,
         persona_hint="flagship_mystic",
     ),
     "palm": ProductRoute(

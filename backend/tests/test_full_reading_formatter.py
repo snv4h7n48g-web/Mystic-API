@@ -49,9 +49,10 @@ def test_build_full_reading_payload_splits_legacy_guidance_for_compatibility() -
         metadata=_metadata(),
     )
 
-    sections_by_id = {section['id']: section['text'] for section in payload['sections']}
-    assert sections_by_id['what_this_is_asking_of_you'].startswith('stop waiting for perfect certainty')
-    assert sections_by_id['your_next_move'].startswith('send the message')
+    sections_by_id = {section['id']: section for section in payload['sections']}
+    assert sections_by_id['what_this_is_asking_of_you']['headline'].startswith('stop waiting for perfect certainty')
+    assert sections_by_id['what_this_is_asking_of_you']['detail'].startswith('before you honour what you already know')
+    assert sections_by_id['your_next_move']['headline'].startswith('send the message')
 
 
 def test_build_full_reading_payload_emits_layered_sections_and_modality_evidence() -> None:
@@ -61,6 +62,7 @@ def test_build_full_reading_payload_emits_layered_sections_and_modality_evidence
             current_pattern='You are outgrowing the version of this question that let you stall.',
             emotional_truth='Part of you wants proof before movement, but the pressure is already the proof.',
             reading_opening='A threshold is here. The reading points to a choice that already has emotional weight.',
+            astrological_foundation='Your Virgo Sun and Capricorn Moon make this a question where discernment and emotional restraint easily turn into over-management.',
             palm_revelation='Your heart line and head line show intensity held under control. In your question, that suggests restraint is part wisdom and part fear.',
             tarot_message='The Chariot in the present position pushes movement, while the Two of Swords in the crossing position shows the split that keeps delaying it. Together the spread says your clarity is blocked more by self-protection than lack of options.',
             signals_agree='Palm and tarot both point to disciplined self-control becoming overcontrol. The pattern is not confusion so much as reluctance to commit to what you already see.',
@@ -73,6 +75,12 @@ def test_build_full_reading_payload_emits_layered_sections_and_modality_evidence
         ),
         metadata=_metadata(),
         question='Should I move forward?',
+        astrology_facts={
+            'sun_sign': 'Virgo',
+            'moon_sign': 'Capricorn',
+            'rising_sign': 'Leo',
+            'dominant_element': 'Earth',
+        },
         tarot_payload={
             'spread': 'present / crossing',
             'cards': [
@@ -89,9 +97,12 @@ def test_build_full_reading_payload_emits_layered_sections_and_modality_evidence
     tarot_section = next(section for section in payload['sections'] if section['id'] == 'tarot_message')
     palm_section = next(section for section in payload['sections'] if section['id'] == 'palm_revelation')
     opening_section = next(section for section in payload['sections'] if section['id'] == 'reading_opening')
+    astro_section = next(section for section in payload['sections'] if section['id'] == 'astrological_foundation')
 
     assert opening_section['headline']
     assert opening_section['detail']
+    assert astro_section['headline']
+    assert 'Virgo Sun and Capricorn Moon' in f"{astro_section['headline']} {astro_section['text']}"
     assert opening_section['default_expanded'] is True
     assert tarot_section['evidence']['tarot']['spread'] == 'present / crossing'
     assert len(tarot_section['evidence']['tarot']['cards']) == 2
@@ -177,12 +188,145 @@ def test_build_full_reading_payload_upgrades_raw_palm_and_shallow_tarot_supporti
 
     palm_section = next(section for section in payload['sections'] if section['id'] == 'palm_revelation')
     tarot_section = next(section for section in payload['sections'] if section['id'] == 'tarot_message')
+    tarot_rendered = f"{tarot_section['headline']} {tarot_section['text']}"
 
     assert 'Head Line speaks to decision-making style' in f"{palm_section['headline']} {palm_section['text']}"
     assert palm_section['evidence']['title'] == 'Supporting palm details'
-    assert 'present / crossing spread reads as movement between these card roles' in tarot_section['text']
-    assert 'The Chariot in the present position contributes available momentum' in tarot_section['text']
-    assert 'Cards in view:' not in tarot_section['text']
+    assert 'Taken together, the cards create one movement rather than two separate ideas' in tarot_rendered
+    assert 'The Chariot in the present position lands as the live pressure point in the present moment, speaking to available momentum' in tarot_rendered
+    assert 'Cards in view:' not in tarot_rendered
+    assert 'items' not in tarot_section.get('evidence', {})
+
+
+def test_build_full_reading_payload_keeps_tarot_story_distinct_from_card_lines() -> None:
+    payload = build_full_reading_payload(
+        normalized=NormalizedMysticOutput(
+            opening_hook='Something important is already moving.',
+            current_pattern='The question has passed the point of being theoretical.',
+            emotional_truth='You are torn between self-protection and directness.',
+            reading_opening='Something important is already moving.',
+            tarot_message='The cards show a tension between leaving, evasion, and truth-telling.',
+            signals_agree='The deeper pattern is avoidance pretending to be caution.',
+            what_this_is_asking_of_you='Stop confusing delay with discernment.',
+            your_next_move='Say the truest sentence you have been editing down.',
+            next_return_invitation='Come back after the conversation happens.',
+        ),
+        metadata=_metadata(),
+        question='What am I not admitting about this decision?',
+        tarot_payload={
+            'spread': 'past / present / guidance',
+            'cards': [
+                {'card': 'Eight of Cups', 'position': 'past', 'meaning': 'walking away from what no longer felt emotionally honest', 'question_link': 'part of you already knows something has been outgrown'},
+                {'card': 'Seven of Swords', 'position': 'present', 'meaning': 'strategic avoidance and partial truth', 'question_link': 'you are managing the decision instead of naming it cleanly'},
+                {'card': 'The Hierophant', 'position': 'guidance', 'meaning': 'truth, principle, and the structure that keeps you aligned', 'question_link': 'the way through is to act from your real values instead of tactical comfort'},
+            ],
+        },
+    )
+
+    tarot_section = next(section for section in payload['sections'] if section['id'] == 'tarot_message')
+    tarot_meta = tarot_section['evidence']['tarot']
+    tarot_rendered = f"{tarot_section['headline']} {tarot_section['text']}"
+    assert tarot_meta['combined_interpretation']
+    assert 'Eight of Cups in the past position lands as the pattern that has already been shaping this question, speaking to walking away from what no longer felt emotionally honest' in tarot_rendered
+    assert 'Seven of Swords in the present position lands as the live pressure point in the present moment, speaking to strategic avoidance and partial truth' in tarot_rendered
+    assert 'The Hierophant in the guidance position lands as the response the spread is steering you toward, speaking to truth, principle, and the structure that keeps you aligned' in tarot_rendered
+    assert 'Taken together, the spread reads like a sequence instead of a pile of symbols' in tarot_meta['combined_interpretation']
+    assert tarot_meta['combined_interpretation'] != tarot_section['detail']
+    assert payload['metadata']['evidence']['tarot']['combined_interpretation'] == tarot_meta['combined_interpretation']
+
+
+def test_build_full_reading_payload_uses_guidebook_reversed_major_arcana_meaning() -> None:
+    payload = build_full_reading_payload(
+        normalized=NormalizedMysticOutput(
+            opening_hook='The pattern is ready to break.',
+            current_pattern='You are close to dropping an old attachment.',
+            emotional_truth='Part of you knows the grip is weakening.',
+            reading_opening='The pattern is ready to break.',
+            tarot_message='This spread is about release.',
+            signals_agree='The old bind is losing power.',
+            what_this_is_asking_of_you='Stop negotiating with what you already know is unhealthy.',
+            your_next_move='Name the pattern and interrupt it once today.',
+            next_return_invitation='Come back once the spell is weaker.',
+        ),
+        metadata=_metadata(),
+        question='Why am I still stuck here?',
+        tarot_payload={
+            'spread': 'past / present / guidance',
+            'cards': [
+                {'card': 'The Devil', 'position': 'past', 'orientation': 'reversed'},
+            ],
+        },
+    )
+
+    tarot_section = next(section for section in payload['sections'] if section['id'] == 'tarot_message')
+    tarot_rendered = f"{tarot_section['headline']} {tarot_section['text']}"
+
+    assert 'The Devil reversed in the past position' in tarot_rendered
+    assert 'release, liberation, or overcoming addiction' in tarot_rendered
+
+
+def test_build_full_reading_payload_populates_interpretive_palm_metadata() -> None:
+    payload = build_full_reading_payload(
+        normalized=NormalizedMysticOutput(
+            opening_hook='A threshold is here.',
+            current_pattern='You already know the question is live.',
+            emotional_truth='The pressure is about control versus trust.',
+            reading_opening='A threshold is here.',
+            astrological_foundation='Your Libra rising and Capricorn Moon make you look steadier than you feel, so the tension gets managed before it gets admitted.',
+            palm_revelation='',
+            tarot_message='Movement and hesitation are both present.',
+            signals_agree='The pattern is asking for a direct step.',
+            what_this_is_asking_of_you='Stop treating delay as wisdom.',
+            your_next_move='Send the message today.',
+            next_return_invitation='Return after the move lands.',
+        ),
+        metadata=_metadata(),
+        astrology_facts={
+            'moon_sign': 'Capricorn',
+            'rising_sign': 'Libra',
+        },
+        question='Should I move forward?',
+        palm_features=[
+            {'label': 'heart_line', 'description': 'deep and curved', 'relevance': 'shows strong emotional investment', 'confidence_label': 'high'},
+            {'label': 'head_line', 'description': 'straight and clear', 'relevance': 'shows control through analysis', 'confidence_label': 'high'},
+        ],
+        include_palm=True,
+    )
+
+    palm_meta = payload['metadata']['evidence']['palm']
+    assert palm_meta['interpretation']
+    assert 'speaks to emotional expression' in palm_meta['interpretation']
+    assert palm_meta['question_relevance'] != 'Should I move forward?'
+    assert 'This is really about whether you should move forward' in palm_meta['question_relevance']
+
+
+def test_build_full_reading_payload_keeps_single_sentence_headlines_non_duplicate() -> None:
+    payload = build_full_reading_payload(
+        normalized=NormalizedMysticOutput(
+            opening_hook='A threshold is here.',
+            current_pattern='You already know the question is live.',
+            emotional_truth='The pressure is about control versus trust.',
+            reading_opening='A threshold is here.',
+            astrological_foundation='Your Libra rising and Capricorn Moon make you look steadier than you feel, so the tension gets managed before it gets admitted.',
+            tarot_message='Movement and hesitation are both present.',
+            signals_agree='The pattern is asking for a direct step.',
+            what_this_is_asking_of_you='Stop treating delay as wisdom.',
+            your_next_move='Send the message today.',
+            next_return_invitation='Return after the move lands.',
+        ),
+        metadata=_metadata(),
+        astrology_facts={
+            'moon_sign': 'Capricorn',
+            'rising_sign': 'Libra',
+        },
+    )
+
+    opening_section = next(section for section in payload['sections'] if section['id'] == 'reading_opening')
+    astro_section = next(section for section in payload['sections'] if section['id'] == 'astrological_foundation')
+    assert opening_section['headline'] == 'A threshold is here.'
+    assert opening_section['detail'] == 'It sets up the larger pattern the rest of the reading will unpack.'
+    assert opening_section['headline'] != opening_section['detail']
+    assert astro_section['headline'].startswith('Your Libra rising and Capricorn Moon make you look steadier than you feel')
 
 
 def test_validate_full_reading_payload_flags_shallow_tarot_and_raw_palm_labels() -> None:

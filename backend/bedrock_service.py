@@ -10,6 +10,7 @@ import time
 from botocore.config import Config
 from typing import Dict, Any, List, Optional
 from reference_knowledge import ASTROLOGY_REFERENCE, TAROT_REFERENCE, PALMISTRY_REFERENCE, VOICE_LIBRARY
+from tarot_knowledge import build_tarot_draw_prompt_context
 
 
 class BedrockService:
@@ -100,6 +101,30 @@ class BedrockService:
 
         return round(input_cost + output_cost, 6)
 
+    def _extract_latency_ms(self, response: Dict[str, Any]) -> Optional[float]:
+        metrics = response.get("metrics") if isinstance(response.get("metrics"), dict) else {}
+        latency_ms = metrics.get("latencyMs") if isinstance(metrics, dict) else None
+        if latency_ms is None:
+            return None
+        try:
+            return round(float(latency_ms), 2)
+        except (TypeError, ValueError):
+            return None
+
+    def _build_timing_fields(self, *, started: float, response: Dict[str, Any]) -> Dict[str, Any]:
+        duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        model_duration_ms = self._extract_latency_ms(response)
+        if model_duration_ms is None:
+            model_duration_ms = duration_ms
+        queue_duration_ms = round(max(0.0, duration_ms - model_duration_ms), 2)
+        return {
+            "duration_ms": duration_ms,
+            "provider_duration_ms": duration_ms,
+            "model_duration_ms": model_duration_ms,
+            "queue_duration_ms": queue_duration_ms,
+            "time_to_first_output_ms": model_duration_ms,
+        }
+
     def invoke_text(
         self,
         *,
@@ -137,6 +162,7 @@ class BedrockService:
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
             cost = self._calculate_cost(model_id, input_tokens, output_tokens)
+            timing = self._build_timing_fields(started=started, response=response)
             return {
                 'text': output_text.strip(),
                 'input_tokens': input_tokens,
@@ -144,7 +170,7 @@ class BedrockService:
                 'cost_usd': cost,
                 'model': model_id,
                 'raw': response,
-                'duration_ms': round((time.perf_counter() - started) * 1000, 2),
+                **timing,
                 'timeout_ms': timeout_ms,
             }
         except Exception as e:
@@ -190,10 +216,12 @@ class BedrockService:
             name = card.get("card") or card.get("name")
             if name:
                 position = card.get("position")
+                orientation = (card.get("orientation") or "upright").strip().lower()
+                orientation_label = ", reversed" if orientation == "reversed" else ""
                 if position:
-                    anchors.append(f"Tarot: {name} ({position})")
+                    anchors.append(f"Tarot: {name} ({position}{orientation_label})")
                 else:
-                    anchors.append(f"Tarot: {name}")
+                    anchors.append(f"Tarot: {name}{orientation_label}")
 
         if palm_facts:
             for feature in palm_facts:
@@ -404,6 +432,8 @@ FLOW TYPE: {flow_type}
         palm_section = ""
         if palm_facts:
             palm_section = f"\n\nPalm features detected:\n{json.dumps(palm_facts, separators=(',', ':'))}"
+        tarot_reference = build_tarot_draw_prompt_context(tarot_cards)
+        tarot_reference_section = f"\n\n{tarot_reference}" if tarot_reference else ""
         user_content = f"""Generate a preview teaser for this reading:
 
 Question: \"{question}\"
@@ -418,7 +448,7 @@ Astrology placements:
 {json.dumps(astrology_facts, separators=(',', ':'))}
 
 Tarot cards drawn:
-{json.dumps(tarot_cards, separators=(',', ':'))}{palm_section}
+{json.dumps(tarot_cards, separators=(',', ':'))}{tarot_reference_section}{palm_section}
 
 Generate a 2-3 sentence teaser that creates curiosity about what these elements reveal together while remaining grounded, specific, and human."""
         system, messages = self._build_messages(system_prompt, user_content)
@@ -480,6 +510,8 @@ Output ONLY the reading text in this format:
         palm_section = ""
         if palm_facts:
             palm_section = f"\n\nPalm features:\n{json.dumps(palm_facts, separators=(',', ':'))}"
+        tarot_reference = build_tarot_draw_prompt_context(tarot_cards)
+        tarot_reference_section = f"\n\n{tarot_reference}" if tarot_reference else ""
         user_content = f"""Create a complete personalised reading:
 
 User's Question: \"{question}\"
@@ -494,7 +526,7 @@ Astrology Data:
 {json.dumps(astrology_facts, separators=(',', ':'))}
 
 Tarot Cards:
-{json.dumps(tarot_cards, separators=(',', ':'))}{palm_section}
+{json.dumps(tarot_cards, separators=(',', ':'))}{tarot_reference_section}{palm_section}
 
 Generate the full reading following this flow schema and the grounding rules."""
         system, messages = self._build_messages(system_prompt, user_content)

@@ -349,6 +349,9 @@ def test_generation_timing_summary_is_attached_for_live_triage(monkeypatch, capl
                     "used_fallback_model": False,
                     "attempt_duration_ms": 140.0,
                     "provider_duration_ms": 100.0,
+                    "queue_duration_ms": 30.0,
+                    "model_duration_ms": 70.0,
+                    "time_to_first_output_ms": 70.0,
                     "parse_duration_ms": 15.0,
                     "timeout_ms": 20000,
                     "prompt_chars": 1200,
@@ -367,6 +370,9 @@ def test_generation_timing_summary_is_attached_for_live_triage(monkeypatch, capl
                     "used_fallback_model": True,
                     "attempt_duration_ms": 210.0,
                     "provider_duration_ms": 160.0,
+                    "queue_duration_ms": 40.0,
+                    "model_duration_ms": 120.0,
+                    "time_to_first_output_ms": 120.0,
                     "parse_duration_ms": 20.0,
                     "timeout_ms": 20000,
                     "prompt_chars": 1500,
@@ -398,12 +404,18 @@ def test_generation_timing_summary_is_attached_for_live_triage(monkeypatch, capl
     timing = result.payload["metadata"]["generation_timing"]
     assert timing["attempt_count"] == 2
     assert timing["provider_total_ms"] == 260.0
+    assert timing["queue_total_ms"] == 70.0
+    assert timing["model_total_ms"] == 190.0
+    assert timing["time_to_first_output_ms"] == 70.0
     assert timing["parse_total_ms"] == 35.0
     assert timing["attempt_total_ms"] == 350.0
     assert timing["orchestration_overhead_ms"] >= 0.0
     assert timing["attempt_models"] == ["model-a", "model-b"]
     assert "total=" in timing["summary"]
     assert "provider=260.0ms" in timing["summary"]
+    assert "queue=70.0ms" in timing["summary"]
+    assert "model=190.0ms" in timing["summary"]
+    assert "ttfo=70.0ms" in timing["summary"]
     assert "parse=35.0ms" in timing["summary"]
     assert "models=model-a,model-b" in timing["summary"]
     assert any("generation_latency_breakdown" in record.message for record in caplog.records)

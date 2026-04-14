@@ -80,6 +80,7 @@ def test_full_reading_validator_accepts_real_two_part_payoff() -> None:
     payload = {
         'sections': [
             {'id': 'reading_opening', 'headline': 'A threshold is here.', 'detail': 'The pattern has become impossible to keep abstract, and the reading begins where avoidance stops working.'},
+            {'id': 'astrological_foundation', 'headline': 'Your chart is already describing the bind.', 'detail': 'The Virgo Sun and Capricorn Moon combination suggests discernment and self-control are strengths here, but they can also turn into over-management when a decision starts to matter emotionally.'},
             {'id': 'tarot_message', 'headline': 'The cards show momentum fighting hesitation.', 'detail': 'The Chariot in the lead position and Two of Swords in tension show momentum fighting hesitation across the spread.'},
             {'id': 'signals_agree', 'headline': 'Every signal points to clarity arriving before comfort.', 'detail': 'Both the symbolic and emotional signals point to clarity already arriving before comfort catches up.'},
             {'id': 'what_this_is_asking_of_you', 'headline': 'Treat clarity like responsibility.', 'detail': 'This reading is asking you to stop treating clarity like a luxury and start treating it like a responsibility. The deeper shift here is less about doing more and more about refusing the emotional bargain that keeps you half-committed.'},
@@ -175,3 +176,78 @@ def test_full_reading_validator_flags_non_interpretive_palm_section_even_with_me
 
     assert result.passed is False
     assert 'full_reading_palm_section_missing_interpretive_meaning' in result.issues
+
+
+def test_full_reading_validator_flags_literal_palm_question_relevance() -> None:
+    payload = {
+        'sections': [
+            {'id': 'reading_opening', 'headline': 'A threshold is here.', 'detail': 'A threshold is here and the pattern is ready to move.'},
+            {
+                'id': 'palm_revelation',
+                'headline': 'Palm',
+                'detail': 'The palm suggests control is shaping how you hold this decision, which matters because it mirrors the same hesitation that keeps the question alive.',
+                'evidence': {'title': 'Supporting palm details', 'items': ['Heart Line - emotional control', 'Head Line - tight analysis']},
+            },
+            {
+                'id': 'tarot_message',
+                'headline': 'The cards are active.',
+                'detail': 'The Hermit in the present position and Two of Wands in the future position create a spread interaction where perspective becomes planning rather than delay.',
+                'evidence': {'tarot': {'spread': 'present / future', 'cards': [
+                    {'card': 'The Hermit', 'position': 'present', 'interpretation': 'discernment becomes clearer in solitude', 'question_link': 'you need space before choosing'},
+                    {'card': 'Two of Wands', 'position': 'future', 'interpretation': 'planning replaces passive waiting', 'question_link': 'the decision wants direction rather than more speculation'},
+                ]}},
+            },
+            {'id': 'signals_agree', 'headline': 'The overlap is real.', 'detail': 'Palm and tarot both point to hesitation becoming a habit instead of protection.'},
+            {'id': 'what_this_is_asking_of_you', 'headline': 'Stop outsourcing clarity.', 'detail': 'This is asking you to trust your own read on the situation instead of waiting for another sign to carry the responsibility for you.'},
+            {'id': 'your_next_move', 'headline': 'Act before the window closes.', 'detail': 'Write the decision in one sentence and send one message tonight so the pattern has to become concrete.'},
+        ],
+        'metadata': {
+            'modalities': {'includes_palm': True},
+            'question': 'Should I move forward?',
+            'evidence': {
+                'palm': {
+                    'question_relevance': 'Should I move forward?',
+                    'signals': [
+                        {'display_name': 'Heart Line', 'observation': 'deep and curved', 'relevance': 'shows strong emotional investment'},
+                        {'display_name': 'Head Line', 'observation': 'straight and clear', 'relevance': 'shows control through analysis'},
+                    ]
+                }
+            }
+        },
+        'snapshot': {'core_theme': 'Choice is active.', 'main_tension': 'Control versus movement.', 'best_next_move': 'Send the message.'},
+    }
+
+    result = validate_product_payload('full_reading', payload)
+
+    assert result.passed is False
+    assert 'full_reading_palm_question_relevance_too_literal' in result.issues
+
+
+def test_full_reading_validator_flags_missing_astrology_section() -> None:
+    payload = {
+        'sections': [
+            {'id': 'reading_opening', 'headline': 'A threshold is here.', 'detail': 'A threshold is here and it already has emotional weight.'},
+            {
+                'id': 'tarot_message',
+                'headline': 'The cards are active.',
+                'detail': 'The Chariot in the present position and Two of Swords in the crossing position show momentum pressing against self-protection.',
+                'evidence': {'tarot': {'spread': 'present / crossing', 'cards': [
+                    {'card': 'The Chariot', 'position': 'present', 'interpretation': 'momentum wants direction', 'question_link': 'you are closer to action than you admit'},
+                    {'card': 'Two of Swords', 'position': 'crossing', 'interpretation': 'indecision is acting like a shield', 'question_link': 'the pause is emotional, not informational'},
+                ]}},
+            },
+            {'id': 'signals_agree', 'headline': 'The overlap is real.', 'detail': 'The pattern is not confusion so much as containment.'},
+            {'id': 'what_this_is_asking_of_you', 'headline': 'Stop bargaining with clarity.', 'detail': 'This is asking you to trust the truth you already reached instead of asking for a cleaner emotional moment before acting.'},
+            {'id': 'your_next_move', 'headline': 'Move before the window narrows.', 'detail': 'Send the message, make the call, or set the boundary today so the pattern has to become concrete.'},
+        ],
+        'metadata': {
+            'modalities': {'includes_palm': False},
+            'question': 'Should I move forward?',
+        },
+        'snapshot': {'core_theme': 'Choice is active.', 'main_tension': 'Control versus movement.', 'best_next_move': 'Send the message.'},
+    }
+
+    result = validate_product_payload('full_reading', payload)
+
+    assert result.passed is False
+    assert 'full_reading_missing_astrology_section' in result.issues

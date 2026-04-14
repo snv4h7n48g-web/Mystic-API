@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import asdict, dataclass, field
+from typing import Any, Optional
 
 
 @dataclass
@@ -35,6 +35,7 @@ class NormalizedMysticOutput:
     snapshot_main_tension: str = ""
     snapshot_best_next_move: str = ""
     reading_opening: str = ""
+    astrological_foundation: str = ""
     palm_revelation: str = ""
     tarot_message: str = ""
     signals_agree: str = ""
@@ -52,10 +53,34 @@ class GenerationMetadata:
 
 
 @dataclass
+class GenerationTiming:
+    total_duration_ms: float = 0.0
+    provider_duration_ms: float | None = None
+    queue_duration_ms: float | None = None
+    model_duration_ms: float | None = None
+    time_to_first_output_ms: float | None = None
+    parse_duration_ms: float | None = None
+    attempt_total_ms: float | None = None
+    orchestration_overhead_ms: float | None = None
+    retry_count: int = 0
+    attempt_count: int = 1
+    used_fallback_model: bool = False
+    fallback_models_used: list[str] = field(default_factory=list)
+    prompt_chars: int = 0
+    context_chars: int = 0
+    attempt_models: list[str] = field(default_factory=list)
+    attempts: list[dict[str, Any]] = field(default_factory=list)
+    summary: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class OrchestrationResult:
     payload: dict
     metadata: GenerationMetadata
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float = 0.0
-    generation_metrics: dict = field(default_factory=dict)
+    generation_metrics: dict[str, Any] = field(default_factory=dict)

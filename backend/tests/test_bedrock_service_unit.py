@@ -99,6 +99,18 @@ def test_build_anchor_list_collects_astro_tarot_and_palm() -> None:
     assert "Palm: life_line = long" in anchors
 
 
+def test_build_anchor_list_marks_reversed_tarot_cards() -> None:
+    service = _service_without_client()
+
+    anchors = service._build_anchor_list(
+        {},
+        [{"card": "The Hanged Man", "position": "guidance", "orientation": "reversed"}],
+        [],
+    )
+
+    assert "Tarot: The Hanged Man (guidance, reversed)" in anchors
+
+
 def test_calculate_cost_uses_per_model_rates() -> None:
     service = _service_without_client()
 

@@ -9,6 +9,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import os
+import time
 from dotenv import load_dotenv
 
 # Import our services
@@ -78,9 +79,17 @@ def _cors_allowed_origins() -> List[str]:
     ]
 
 
+def _cors_allowed_origin_regex() -> str | None:
+    if IS_PRODUCTION:
+        return None
+    # Allow local frontend dev servers on arbitrary ports, including Vite/Next/etc.
+    return r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_allowed_origins(),
+    allow_origin_regex=_cors_allowed_origin_regex(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -680,6 +689,7 @@ def draw_tarot(card_count: int = 3):
     if card_count <= 0:
         return []
 
+    random = secrets.SystemRandom()
     positions = ["Past", "Present", "Guidance"]
     if card_count == 1:
         positions = ["Card"]
@@ -688,9 +698,13 @@ def draw_tarot(card_count: int = 3):
     else:
         positions = positions[:card_count]
 
-    cards = secrets.SystemRandom().sample(TAROT_DECK, card_count)
+    cards = random.sample(TAROT_DECK, card_count)
     return [
-        {"card": card, "position": positions[idx]}
+        {
+            "card": card,
+            "position": positions[idx],
+            "orientation": "reversed" if random.choice((False, True)) else "upright",
+        }
         for idx, card in enumerate(cards)
     ]
 
@@ -1493,6 +1507,7 @@ def generate_preview(
     Generate preview with real astrology calculation and LLM teaser.
     This is the loss-leader call that converts users.
     """
+    request_started_at = time.perf_counter()
     session = db_get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
@@ -1527,7 +1542,16 @@ def generate_preview(
                 preview_existing["entitlements"] = entitlements
         if session.get("status") != "preview_ready":
             db_update_session(session_id, status="preview_ready")
-        return {"status": "preview_ready", "preview": preview_existing}
+        completed_at = time.perf_counter()
+        return {
+            "status": "preview_ready",
+            "preview": preview_existing,
+            "timing": _build_route_timing(
+                request_started_at=request_started_at,
+                completed_at=completed_at,
+                first_output_at=completed_at,
+            ),
+        }
 
     # Ensure tarot is drawn only for tarot-based flows and redraw if the stored
     # spread no longer matches the active flow (for example, switching from
@@ -1566,7 +1590,16 @@ def generate_preview(
                     preview=latest_today["payload"],
                     status="preview_ready",
                 )
-                return {"status": "preview_ready", "preview": latest_today["payload"]}
+                completed_at = time.perf_counter()
+                return {
+                    "status": "preview_ready",
+                    "preview": latest_today["payload"],
+                    "timing": _build_route_timing(
+                        request_started_at=request_started_at,
+                        completed_at=completed_at,
+                        first_output_at=completed_at,
+                    ),
+                }
             if latest_today["kind"] == "reading":
                 for sess in sessions_to_check:
                     if str(sess.get("id")) == str(latest_today["session_id"]):
@@ -1577,9 +1610,19 @@ def generate_preview(
                                 preview=existing_preview,
                                 status="preview_ready",
                             )
-                            return {"status": "preview_ready", "preview": existing_preview}
+                            completed_at = time.perf_counter()
+                            return {
+                                "status": "preview_ready",
+                                "preview": existing_preview,
+                                "timing": _build_route_timing(
+                                    request_started_at=request_started_at,
+                                    completed_at=completed_at,
+                                    first_output_at=completed_at,
+                                ),
+                            }
 
     try:
+        generation_started_at = time.perf_counter()
         # Get services
         astro_engine = get_astrology_engine()
         geo_service = get_geocoding_service()
@@ -1741,7 +1784,17 @@ def generate_preview(
             )
         db_update_session(session_id, **session_updates)
 
-        return {"status": "preview_ready", "preview": preview}
+        completed_at = time.perf_counter()
+        return {
+            "status": "preview_ready",
+            "preview": preview,
+            "timing": _build_route_timing(
+                request_started_at=request_started_at,
+                generation_started_at=generation_started_at,
+                first_output_at=completed_at,
+                completed_at=completed_at,
+            ),
+        }
 
     except Exception as e:
         raise HTTPException(500, f"Preview generation failed: {str(e)}")
@@ -1749,6 +1802,25 @@ def generate_preview(
 
 def _serialize_sse_event(event: str, data: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _build_route_timing(
+    *,
+    request_started_at: float,
+    generation_started_at: Optional[float] = None,
+    first_output_at: Optional[float] = None,
+    completed_at: Optional[float] = None,
+) -> Dict[str, float]:
+    completed_at = completed_at or time.perf_counter()
+    generation_started_at = generation_started_at or request_started_at
+    first_output_at = first_output_at or request_started_at
+
+    return {
+        "total_request_time_ms": round(max(0.0, (completed_at - request_started_at) * 1000), 2),
+        "queue_time_ms": round(max(0.0, (generation_started_at - request_started_at) * 1000), 2),
+        "model_time_ms": round(max(0.0, (completed_at - generation_started_at) * 1000), 2),
+        "time_to_first_output_ms": round(max(0.0, (first_output_at - request_started_at) * 1000), 2),
+    }
 
 
 def _reading_product_key(reading: Dict[str, Any]) -> Optional[str]:
@@ -1792,20 +1864,27 @@ def _post_completion_validation_audit(reading: Dict[str, Any]) -> Optional[Dict[
 
 
 
-def _iter_reading_section_events(reading: Dict[str, Any], session_id: str):
+def _iter_reading_section_events(
+    reading: Dict[str, Any],
+    session_id: str,
+    *,
+    include_started: bool = True,
+    timing: Optional[Dict[str, Any]] = None,
+):
     sections = reading.get("sections") or []
     metadata = reading.get("metadata") if isinstance(reading.get("metadata"), dict) else {}
     emitted_count = 0
     rejected_sections: list[dict[str, Any]] = []
-    yield _serialize_sse_event(
-        "reading_started",
-        {
+    if include_started:
+        started_payload = {
             "session_id": session_id,
             "section_count": len(sections),
             "flow_type": metadata.get("flow_type"),
             "generated_at": metadata.get("generated_at"),
-        },
-    )
+        }
+        if timing is not None:
+            started_payload["timing"] = timing
+        yield _serialize_sse_event("reading_started", started_payload)
     for index, section in enumerate(sections):
         safety = assess_section_safety(section)
         if not safety.passed:
@@ -1841,29 +1920,29 @@ def _iter_reading_section_events(reading: Dict[str, Any], session_id: str):
 
     validation_audit = _post_completion_validation_audit(reading)
     if emitted_count == 0:
-        yield _serialize_sse_event(
-            "reading_failed",
-            {
-                "session_id": session_id,
-                "status_code": 422,
-                "detail": "No safe sections were available to stream",
-                "rejected_sections": rejected_sections,
-                "validation": validation_audit,
-            },
-        )
-        return
-
-    yield _serialize_sse_event(
-        "reading_completed",
-        {
+        failed_payload = {
             "session_id": session_id,
-            "section_count": len(sections),
-            "emitted_section_count": emitted_count,
+            "status_code": 422,
+            "detail": "No safe sections were available to stream",
             "rejected_sections": rejected_sections,
             "validation": validation_audit,
-            "reading": reading,
-        },
-    )
+        }
+        if timing is not None:
+            failed_payload["timing"] = timing
+        yield _serialize_sse_event("reading_failed", failed_payload)
+        return
+
+    completed_payload = {
+        "session_id": session_id,
+        "section_count": len(sections),
+        "emitted_section_count": emitted_count,
+        "rejected_sections": rejected_sections,
+        "validation": validation_audit,
+        "reading": reading,
+    }
+    if timing is not None:
+        completed_payload["timing"] = timing
+    yield _serialize_sse_event("reading_completed", completed_payload)
 
 
 def _build_session_reading_response(
@@ -2096,7 +2175,17 @@ def generate_reading(
     Generate full reading with complete LLM synthesis.
     Only callable after payment verification.
     """
-    return _build_session_reading_response(session_id=session_id, user=user, daily=daily)
+    request_started_at = time.perf_counter()
+    generation_started_at = time.perf_counter()
+    response = _build_session_reading_response(session_id=session_id, user=user, daily=daily)
+    completed_at = time.perf_counter()
+    response["timing"] = _build_route_timing(
+        request_started_at=request_started_at,
+        generation_started_at=generation_started_at,
+        first_output_at=completed_at,
+        completed_at=completed_at,
+    )
+    return response
 
 
 @app.get("/v1/sessions/{session_id}/reading/stream")
@@ -2106,10 +2195,32 @@ def stream_reading(
     user: Optional[dict] = Depends(get_current_user_optional),
 ):
     def event_stream():
+        request_started_at = time.perf_counter()
+        first_output_at = time.perf_counter()
+        generation_started_at = request_started_at
+        yield _serialize_sse_event(
+            "reading_started",
+            {
+                "session_id": session_id,
+                "streaming": True,
+            },
+        )
         try:
+            generation_started_at = time.perf_counter()
             response = _build_session_reading_response(session_id=session_id, user=user, daily=daily)
             reading = response.get("reading") or {}
-            yield from _iter_reading_section_events(reading=reading, session_id=session_id)
+            completed_at = time.perf_counter()
+            yield from _iter_reading_section_events(
+                reading=reading,
+                session_id=session_id,
+                include_started=False,
+                timing=_build_route_timing(
+                    request_started_at=request_started_at,
+                    generation_started_at=generation_started_at,
+                    first_output_at=first_output_at,
+                    completed_at=completed_at,
+                ),
+            )
         except HTTPException as exc:
             yield _serialize_sse_event(
                 "reading_failed",
@@ -2117,6 +2228,11 @@ def stream_reading(
                     "session_id": session_id,
                     "status_code": exc.status_code,
                     "detail": exc.detail,
+                    "timing": _build_route_timing(
+                        request_started_at=request_started_at,
+                        generation_started_at=generation_started_at,
+                        first_output_at=first_output_at,
+                    ),
                 },
             )
         except Exception as exc:
@@ -2126,6 +2242,11 @@ def stream_reading(
                     "session_id": session_id,
                     "status_code": 500,
                     "detail": str(exc),
+                    "timing": _build_route_timing(
+                        request_started_at=request_started_at,
+                        generation_started_at=generation_started_at,
+                        first_output_at=first_output_at,
+                    ),
                 },
             )
 

@@ -8,6 +8,9 @@ Non-negotiables:
 - The opening should name the atmosphere or turning point.
 - The pattern section should explain what is repeating or organizing beneath the surface.
 - The truth section should name the emotional reality, contradiction, or need at the center of the reading.
+- When tarot is present, treat it like a story engine, not a card glossary. Each card should feel alive, specific, and part of one unfolding movement.
+- Vary sentence length and rhythm. Give the reading at least one striking line that feels memorable and premium.
+- Let the prose feel confident and polished: evocative, intimate, and readable rather than clinical, padded, or list-like.
 - The payoff must split cleanly: what_this_is_asking_of_you is the deeper invitation or demand; your_next_move is the concrete, grounded action or decision.
 - Keep the four movements distinct: opening, pattern, truth, payoff.
 - Prefer emotionally precise language over generic self-help phrasing.

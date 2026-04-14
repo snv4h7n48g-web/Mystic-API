@@ -36,23 +36,40 @@ class MysticGenerationOrchestrator:
     """Phase-3 product-aware orchestration with bounded validation retries."""
 
     def _summarize_generation_metrics(self, *, attempt_metrics: list[dict[str, Any]], total_duration_ms: float) -> dict[str, Any]:
+        def _sum_metric(field_name: str) -> float:
+            return round(
+                sum((metric.get(field_name) or 0) for metric in attempt_metrics),
+                2,
+            )
+
+        def _first_metric(field_name: str) -> float | None:
+            for metric in attempt_metrics:
+                value = metric.get(field_name)
+                if value is not None:
+                    try:
+                        return round(float(value), 2)
+                    except (TypeError, ValueError):
+                        continue
+            return None
+
         provider_total_ms = round(
             sum((metric.get("provider_duration_ms") or 0) for metric in attempt_metrics),
             2,
         )
-        parse_total_ms = round(
-            sum((metric.get("parse_duration_ms") or 0) for metric in attempt_metrics),
-            2,
-        )
-        attempt_total_ms = round(
-            sum((metric.get("attempt_duration_ms") or 0) for metric in attempt_metrics),
-            2,
-        )
+        parse_total_ms = _sum_metric("parse_duration_ms")
+        attempt_total_ms = _sum_metric("attempt_duration_ms")
+        queue_total_ms = _sum_metric("queue_duration_ms")
+        model_total_ms = _sum_metric("model_duration_ms")
+        time_to_first_output_ms = _first_metric("time_to_first_output_ms")
         orchestration_overhead_ms = round(max(0.0, total_duration_ms - provider_total_ms - parse_total_ms), 2)
         attempt_models = [metric.get("attempt_model") for metric in attempt_metrics if metric.get("attempt_model")]
+        ttfo_summary = f"ttfo={time_to_first_output_ms}ms" if time_to_first_output_ms is not None else "ttfo=unknown"
         summary = (
             f"total={total_duration_ms}ms "
             f"provider={provider_total_ms}ms "
+            f"queue={queue_total_ms}ms "
+            f"model={model_total_ms}ms "
+            f"{ttfo_summary} "
             f"parse={parse_total_ms}ms "
             f"overhead={orchestration_overhead_ms}ms "
             f"attempts={len(attempt_metrics)} "
@@ -60,6 +77,9 @@ class MysticGenerationOrchestrator:
         )
         return {
             "provider_total_ms": provider_total_ms,
+            "queue_total_ms": queue_total_ms,
+            "model_total_ms": model_total_ms,
+            "time_to_first_output_ms": time_to_first_output_ms,
             "parse_total_ms": parse_total_ms,
             "attempt_total_ms": attempt_total_ms,
             "orchestration_overhead_ms": orchestration_overhead_ms,
@@ -147,7 +167,10 @@ class MysticGenerationOrchestrator:
                         "attempt_index": candidate_index,
                         "used_fallback_model": candidate_index > 1,
                         "attempt_duration_ms": total_attempt_ms,
-                        "provider_duration_ms": llm_result.get("duration_ms"),
+                        "provider_duration_ms": llm_result.get("provider_duration_ms", llm_result.get("duration_ms")),
+                        "queue_duration_ms": llm_result.get("queue_duration_ms"),
+                        "model_duration_ms": llm_result.get("model_duration_ms"),
+                        "time_to_first_output_ms": llm_result.get("time_to_first_output_ms"),
                         "parse_duration_ms": parse_duration_ms,
                         "timeout_ms": profile.timeout_ms,
                         "prompt_chars": prompt.get("prompt_chars", 0),
@@ -156,7 +179,7 @@ class MysticGenerationOrchestrator:
                     },
                 )
                 logger.info(
-                    "generation_attempt_success flow=%s surface=%s product=%s attempt=%s/%s model=%s fallback=%s duration_ms=%s provider_ms=%s parse_ms=%s timeout_ms=%s prompt_chars=%s",
+                    "generation_attempt_success flow=%s surface=%s product=%s attempt=%s/%s model=%s fallback=%s duration_ms=%s provider_ms=%s queue_ms=%s model_ms=%s ttfo_ms=%s parse_ms=%s timeout_ms=%s prompt_chars=%s",
                     context.flow_type,
                     context.surface,
                     route.product_key,
@@ -165,7 +188,10 @@ class MysticGenerationOrchestrator:
                     candidate_model_id,
                     candidate_index > 1,
                     total_attempt_ms,
-                    llm_result.get("duration_ms"),
+                    llm_result.get("provider_duration_ms", llm_result.get("duration_ms")),
+                    llm_result.get("queue_duration_ms"),
+                    llm_result.get("model_duration_ms"),
+                    llm_result.get("time_to_first_output_ms"),
                     parse_duration_ms,
                     profile.timeout_ms,
                     prompt.get("prompt_chars", 0),
@@ -239,6 +265,7 @@ class MysticGenerationOrchestrator:
                     normalized=normalized,
                     metadata=metadata,
                     question=context.question,
+                    astrology_facts=astrology_facts or {},
                     tarot_payload=tarot_payload or {},
                     palm_features=palm_features or [],
                     include_palm=include_palm,
@@ -359,6 +386,9 @@ class MysticGenerationOrchestrator:
             "prompt_chars": max((metric.get("prompt_chars") or 0) for metric in attempt_metrics) if attempt_metrics else 0,
             "context_chars": max((metric.get("context_chars") or 0) for metric in attempt_metrics) if attempt_metrics else 0,
             "provider_total_ms": timing_summary["provider_total_ms"],
+            "queue_total_ms": timing_summary["queue_total_ms"],
+            "model_total_ms": timing_summary["model_total_ms"],
+            "time_to_first_output_ms": timing_summary["time_to_first_output_ms"],
             "parse_total_ms": timing_summary["parse_total_ms"],
             "attempt_total_ms": timing_summary["attempt_total_ms"],
             "orchestration_overhead_ms": timing_summary["orchestration_overhead_ms"],
@@ -370,7 +400,7 @@ class MysticGenerationOrchestrator:
         self._attach_contract_metadata(context=context, payload=final_payload, validation=final_validation, attempts=final_attempt_count)
         final_guidance_text = next((section.get("text", "") for section in final_payload.get("sections", []) if section.get("id") in {"practical_guidance", "reflective_guidance"}), "")
         logger.warning(
-            "quality_gate_final product=%s flow=%s surface=%s attempts=%s retries=%s fallback=%s total_duration_ms=%s passed=%s issues=%s guidance=%r timing_summary=%s",
+            "quality_gate_final product=%s flow=%s surface=%s attempts=%s retries=%s fallback=%s total_duration_ms=%s queue_total_ms=%s model_total_ms=%s ttfo_ms=%s passed=%s issues=%s guidance=%r timing_summary=%s",
             route.product_key,
             context.flow_type,
             context.surface,
@@ -378,6 +408,9 @@ class MysticGenerationOrchestrator:
             generation_metrics["retry_count"],
             generation_metrics["used_fallback_model"],
             total_duration_ms,
+            generation_metrics["queue_total_ms"],
+            generation_metrics["model_total_ms"],
+            generation_metrics["time_to_first_output_ms"],
             final_validation.passed,
             final_validation.issues,
             final_guidance_text[:240],

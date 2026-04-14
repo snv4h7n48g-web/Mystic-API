@@ -60,6 +60,7 @@ def parse_normalized_output(raw_text: str) -> NormalizedMysticOutput:
         snapshot_main_tension=str(payload.get("snapshot_main_tension") or ""),
         snapshot_best_next_move=str(payload.get("snapshot_best_next_move") or ""),
         reading_opening=str(payload.get("reading_opening") or ""),
+        astrological_foundation=str(payload.get("astrological_foundation") or ""),
         palm_revelation=str(payload.get("palm_revelation") or ""),
         tarot_message=str(payload.get("tarot_message") or ""),
         signals_agree=str(payload.get("signals_agree") or ""),

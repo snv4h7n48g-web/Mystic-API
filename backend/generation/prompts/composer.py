@@ -8,7 +8,7 @@ from .flow_prompts import FLOW_PROMPTS
 from .output_schema import OUTPUT_SCHEMA_INSTRUCTION
 from .persona_prompts import PERSONA_PROMPTS
 
-PROMPT_VERSION = "mystic-v1"
+PROMPT_VERSION = "mystic-v2"
 
 
 def _prune_prompt_payload(data: Any) -> Any:

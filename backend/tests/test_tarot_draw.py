@@ -6,6 +6,7 @@ def test_draw_tarot_defaults_to_three_card_spread():
 
     assert len(cards) == 3
     assert [card["position"] for card in cards] == ["Past", "Present", "Guidance"]
+    assert all(card["orientation"] in {"upright", "reversed"} for card in cards)
 
 
 def test_draw_tarot_supports_single_card_spread():
@@ -14,6 +15,7 @@ def test_draw_tarot_supports_single_card_spread():
     assert len(cards) == 1
     assert cards[0]["position"] == "Card"
     assert isinstance(cards[0]["card"], str)
+    assert cards[0]["orientation"] in {"upright", "reversed"}
 
 
 def test_tarot_matcher_respects_flow_card_count():

@@ -133,7 +133,8 @@ class PalmVisionService:
         
         return f"""Analyze this palm image ({handedness} hand, {hand_desc}).
 
-Identify and describe the following features in detail:
+Identify and describe the following features in detail.
+Keep the descriptions interpretive and meaning-focused, not OCR-like; explain what each feature likely suggests, not just what it looks like.
 
 1. **Major Lines:**
    - Life line: length, depth, clarity, any breaks or chains
@@ -198,10 +199,10 @@ Return ONLY a JSON object with this exact structure:
     "finger_length": "long/medium/short",
     "flexibility": "rigid/moderate/flexible"
   }},
-  "overall_impression": "2-3 sentence summary of key features"
+  "overall_impression": "2-3 sentence synthesis of the hand's meaning and dominant pattern"
 }}
 
-        Be objective and descriptive. Focus on observable features."""
+        Be objective about what is visible, but make the descriptions and overall impression interpretive rather than purely literal."""
 
     def _detect_image_format(self, image_data: bytes) -> str:
         """Best-effort detection of image format for Bedrock."""

@@ -16,7 +16,7 @@ def test_compose_generation_prompt_includes_persona_flow_and_schema() -> None:
     )
 
     assert "system_prompt" in prompt
-    assert prompt["prompt_version"] == "mystic-v1"
+    assert prompt["prompt_version"] == "mystic-v2"
     assert any("PERSONA:" in message for message in prompt["messages"])
     assert any("FLOW:" in message for message in prompt["messages"])
     assert any("Return JSON" in message for message in prompt["messages"])
@@ -159,11 +159,13 @@ def test_choose_persona_keeps_daily_on_refined_psychic_best_friend() -> None:
     assert persona == "psychic_best_friend"
 
 
-def test_invoke_text_uses_bedrock_converse_and_returns_usage() -> None:
+def test_invoke_text_uses_bedrock_converse_and_returns_usage(monkeypatch) -> None:
     service = BedrockService.__new__(BedrockService)
     service.costs = {
         "test-model": {"input": 0.001, "output": 0.002},
     }
+    perf_counter_values = iter([100.0, 100.25])
+    monkeypatch.setattr("bedrock_service.time.perf_counter", lambda: next(perf_counter_values))
 
     class FakeClient:
         def converse(self, **kwargs):
@@ -172,6 +174,7 @@ def test_invoke_text_uses_bedrock_converse_and_returns_usage() -> None:
             return {
                 "output": {"message": {"content": [{"text": '{"opening_hook":"A","current_pattern":"B","emotional_truth":"C","practical_guidance":"D","continuity_callback":null,"next_return_invitation":"E","premium_teaser":"F","theme_tags":["x"]}'}]}},
                 "usage": {"inputTokens": 12, "outputTokens": 34},
+                "metrics": {"latencyMs": 180.0},
             }
 
     service.client = FakeClient()
@@ -191,7 +194,11 @@ def test_invoke_text_uses_bedrock_converse_and_returns_usage() -> None:
     assert result["input_tokens"] == 12
     assert result["output_tokens"] == 34
     assert result["timeout_ms"] == 4321
-    assert result["duration_ms"] >= 0
+    assert result["duration_ms"] == 250.0
+    assert result["provider_duration_ms"] == 250.0
+    assert result["model_duration_ms"] == 180.0
+    assert result["queue_duration_ms"] == 70.0
+    assert result["time_to_first_output_ms"] == 180.0
     assert result["text"].startswith('{"opening_hook"')
 
 
