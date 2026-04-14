@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 # Import our services
 from bedrock_service import get_bedrock_service
 from generation import get_generation_orchestrator
+from generation.validators import assess_section_safety, validate_product_payload
 from astrology_engine import get_astrology_engine
 from geocoding_service import get_geocoding_service
 from palm_vision_service import get_palm_vision_service
@@ -1750,9 +1751,52 @@ def _serialize_sse_event(event: str, data: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _reading_product_key(reading: Dict[str, Any]) -> Optional[str]:
+    metadata = reading.get("metadata") if isinstance(reading.get("metadata"), dict) else {}
+    validation = metadata.get("validation") if isinstance(metadata.get("validation"), dict) else {}
+    product_key = (validation.get("product_key") or "").strip()
+    if product_key:
+        return product_key
+
+    flow_type = (metadata.get("flow_type") or reading.get("flow_type") or "combined").strip().lower()
+    return {
+        "combined": "full_reading",
+        "tarot_solo": "tarot",
+        "daily_horoscope": "daily",
+        "lunar_new_year_solo": "lunar",
+        "compatibility": "compatibility",
+        "feng_shui": "feng_shui",
+    }.get(flow_type)
+
+
+
+def _post_completion_validation_audit(reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    metadata = reading.get("metadata") if isinstance(reading.get("metadata"), dict) else {}
+    existing = metadata.get("validation") if isinstance(metadata.get("validation"), dict) else None
+    if existing is not None:
+        return existing
+
+    product_key = _reading_product_key(reading)
+    if not product_key:
+        return None
+
+    validation = validate_product_payload(product_key, reading)
+    return {
+        "product_key": validation.product_key,
+        "valid": validation.valid,
+        "passed": validation.passed,
+        "issues": validation.issues,
+        "retry_hint": validation.retry_hint,
+        "attempts": 1,
+    }
+
+
+
 def _iter_reading_section_events(reading: Dict[str, Any], session_id: str):
     sections = reading.get("sections") or []
     metadata = reading.get("metadata") if isinstance(reading.get("metadata"), dict) else {}
+    emitted_count = 0
+    rejected_sections: list[dict[str, Any]] = []
     yield _serialize_sse_event(
         "reading_started",
         {
@@ -1763,6 +1807,27 @@ def _iter_reading_section_events(reading: Dict[str, Any], session_id: str):
         },
     )
     for index, section in enumerate(sections):
+        safety = assess_section_safety(section)
+        if not safety.passed:
+            rejected_sections.append({
+                "id": safety.section_id,
+                "issues": safety.issues,
+                "index": index,
+                "order": index + 1,
+            })
+            yield _serialize_sse_event(
+                "section_rejected",
+                {
+                    "session_id": session_id,
+                    "index": index,
+                    "order": index + 1,
+                    "total": len(sections),
+                    "section_id": safety.section_id,
+                    "issues": safety.issues,
+                },
+            )
+            continue
+        emitted_count += 1
         yield _serialize_sse_event(
             "section_completed",
             {
@@ -1773,11 +1838,29 @@ def _iter_reading_section_events(reading: Dict[str, Any], session_id: str):
                 "section": section,
             },
         )
+
+    validation_audit = _post_completion_validation_audit(reading)
+    if emitted_count == 0:
+        yield _serialize_sse_event(
+            "reading_failed",
+            {
+                "session_id": session_id,
+                "status_code": 422,
+                "detail": "No safe sections were available to stream",
+                "rejected_sections": rejected_sections,
+                "validation": validation_audit,
+            },
+        )
+        return
+
     yield _serialize_sse_event(
         "reading_completed",
         {
             "session_id": session_id,
             "section_count": len(sections),
+            "emitted_section_count": emitted_count,
+            "rejected_sections": rejected_sections,
+            "validation": validation_audit,
             "reading": reading,
         },
     )

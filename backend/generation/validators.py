@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 
 from .products.compatibility.validator import validate_compatibility_payload
 from .products.daily_horoscope.validator import validate_daily_payload
@@ -21,6 +22,38 @@ class ValidationResult:
     @property
     def valid(self) -> bool:
         return self.passed
+
+
+@dataclass(frozen=True)
+class SectionSafetyResult:
+    section_id: str
+    passed: bool
+    issues: list[str] = field(default_factory=list)
+
+
+_PLACEHOLDER_RE = re.compile(r"^(?:todo|tbd|coming soon|placeholder|n/?a|none|null|\.{3,}|—+|-+)$", re.IGNORECASE)
+_STUB_RE = re.compile(r'^\s*(?:\d+[.):-]?|[-*])\s*$')
+_DANGLING_RE = re.compile(r'(?:steps?|guidance|next steps?|next move)\s*:\s*1\.?\s*$', re.IGNORECASE)
+_TRUNCATED_RE = re.compile(r'(?:[:;,-]|\b(?:and|or|to|with|consider|including|like|such as|for example)\s*)$', re.IGNORECASE)
+
+
+def _section_primary_text(section: dict) -> str:
+    return str(section.get("detail") or section.get("text") or "").strip()
+
+
+def assess_section_safety(section: dict) -> SectionSafetyResult:
+    section_id = str(section.get("id") or "unknown")
+    text = _section_primary_text(section)
+    issues: list[str] = []
+
+    if not text:
+        issues.append("missing_text")
+    elif _PLACEHOLDER_RE.match(text):
+        issues.append("placeholder_text")
+    elif _STUB_RE.match(text) or _DANGLING_RE.search(text) or _TRUNCATED_RE.search(text):
+        issues.append("malformed_text")
+
+    return SectionSafetyResult(section_id=section_id, passed=not issues, issues=issues)
 
 
 VALIDATORS = {
