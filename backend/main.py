@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Depends, Body
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 from sqlalchemy import create_engine, text
@@ -1745,16 +1746,48 @@ def generate_preview(
         raise HTTPException(500, f"Preview generation failed: {str(e)}")
 
 
-@app.post("/v1/sessions/{session_id}/reading")
-def generate_reading(
+def _serialize_sse_event(event: str, data: Dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _iter_reading_section_events(reading: Dict[str, Any], session_id: str):
+    sections = reading.get("sections") or []
+    metadata = reading.get("metadata") if isinstance(reading.get("metadata"), dict) else {}
+    yield _serialize_sse_event(
+        "reading_started",
+        {
+            "session_id": session_id,
+            "section_count": len(sections),
+            "flow_type": metadata.get("flow_type"),
+            "generated_at": metadata.get("generated_at"),
+        },
+    )
+    for index, section in enumerate(sections):
+        yield _serialize_sse_event(
+            "section_completed",
+            {
+                "session_id": session_id,
+                "index": index,
+                "order": index + 1,
+                "total": len(sections),
+                "section": section,
+            },
+        )
+    yield _serialize_sse_event(
+        "reading_completed",
+        {
+            "session_id": session_id,
+            "section_count": len(sections),
+            "reading": reading,
+        },
+    )
+
+
+def _build_session_reading_response(
     session_id: str,
+    user: Optional[dict],
     daily: bool = False,
-    user: Optional[dict] = Depends(get_current_user_optional)
-):
-    """
-    Generate full reading with complete LLM synthesis.
-    Only callable after payment verification.
-    """
+) -> Dict[str, Any]:
     session = db_get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
@@ -1772,7 +1805,6 @@ def generate_reading(
             raise HTTPException(402, "Reading purchase required")
         return {"status": "complete", "reading": session["reading"]}
 
-    # Check session has preview (status alone is not enough for legacy sessions).
     preview = session.get("preview")
     if not preview:
         raise HTTPException(400, "Preview must be generated first")
@@ -1782,7 +1814,6 @@ def generate_reading(
     content_contract = _session_content_contract(session)
     current_contract_signature = _content_contract_signature(content_contract)
 
-    # Daily consistency (account + anonymous): return same-day reading if it exists.
     tz_name = session.get("timezone")
     sessions_to_check = [session]
     if user:
@@ -1811,43 +1842,35 @@ def generate_reading(
         raise HTTPException(402, "Reading purchase required")
 
     try:
-        # Get services
         bedrock = get_bedrock_service()
 
-        # Get data from preview
         preview = session.get("preview") or {}
         astrology_facts = preview["astrology_facts"]
         tarot_cards = preview["tarot"]["cards"]
         tarot_payload = preview.get("tarot") or {"spread": "none", "cards": tarot_cards}
-        
+
         inputs = session.get("inputs") or {}
         question = inputs["question_intention"]
         style = session.get("style", "grounded")
 
-        # Get palm features if available
         palm_features = None
         palm_analysis = session.get("palm_analysis")
         if palm_analysis:
-            # Convert full palm analysis to feature list
             palm_features = [
                 {"feature": "life_line", "value": f"{palm_analysis.get('life_line', {}).get('length', 'unknown')} - {palm_analysis.get('life_line', {}).get('description', '')}"},
                 {"feature": "heart_line", "value": f"{palm_analysis.get('heart_line', {}).get('shape', 'unknown')} - {palm_analysis.get('heart_line', {}).get('description', '')}"},
                 {"feature": "head_line", "value": f"{palm_analysis.get('head_line', {}).get('angle', 'unknown')} - {palm_analysis.get('head_line', {}).get('description', '')}"},
-                {"feature": "overall", "value": palm_analysis.get('overall_impression', '')}
+                {"feature": "overall", "value": palm_analysis.get('overall_impression', '')},
             ]
 
-        # If a prior reading exists for today and palm just got added, allow a palm-inclusive refresh.
         if latest_today and latest_today.get("kind") == "reading" and palm_analysis:
             existing_reading = latest_today["payload"]
             if _reading_includes_palm(existing_reading):
                 return {"status": "complete", "reading": existing_reading}
 
-        # Get services
         astro_engine = get_astrology_engine()
         includes_palm = content_contract["include_palm"]
         purchased = session.get("purchased_products") or []
-        inputs = session.get("inputs") or {}
-        bundle_product = _bundle_product_for_inputs(inputs)
         subscription_included = _has_active_subscription(user)
         deep_access = (
             _user_has_feature_access(user, purchased, "deep")
@@ -1894,13 +1917,12 @@ def generate_reading(
                 include_palm=includes_palm,
             )
 
-            # Build reading response
             generated_at = datetime.now(timezone.utc).isoformat()
             reading = {
                 "sections": llm_result["sections"],
                 "full_text": llm_result["full_text"],
                 "metadata": {
-                    "dominant_themes": ["responsibility", "transformation"],  # TODO: extract from LLM
+                    "dominant_themes": ["responsibility", "transformation"],
                     "tone": f"{style}-introspective",
                     "confidence": "medium",
                     "personalisation_score": 0.85,
@@ -1912,10 +1934,9 @@ def generate_reading(
                     "deep_access": deep_access,
                     "flow_type": flow_type,
                     "content_contract": content_contract,
-                }
+                },
             }
 
-        # Lunar New Year Forecast add-on is explicit content, not implied by subscription.
         lunar_included = (
             flow_type != "lunar_new_year_solo"
             and content_contract["include_lunar_forecast"] is True
@@ -1935,13 +1956,13 @@ def generate_reading(
                 lunar_result = bedrock.generate_lunar_forecast(
                     question=question,
                     zodiac=user_zodiac,
-                    year_label=year_label
+                    year_label=year_label,
                 )
 
                 reading["sections"].append({
                     "id": "lunar_forecast",
                     "text": lunar_result["text"],
-                    "title": f"YOUR YEAR AHEAD ({year_label})"
+                    "title": f"YOUR YEAR AHEAD ({year_label})",
                 })
                 reading["full_text"] = (
                     f"{reading['full_text']}\n\n---LUNAR_FORECAST---\n{lunar_result['text']}\n"
@@ -1952,12 +1973,11 @@ def generate_reading(
                     "model": lunar_result["model"],
                     "input_tokens": lunar_result["input_tokens"],
                     "output_tokens": lunar_result["output_tokens"],
-                    "cost_usd": lunar_result["cost_usd"]
+                    "cost_usd": lunar_result["cost_usd"],
                 }
 
         reading["metadata"]["subscription_active"] = subscription_included
 
-        # Update session
         reading_updates = {
             "reading": reading,
             "status": "complete",
@@ -1977,8 +1997,64 @@ def generate_reading(
 
         return {"status": "complete", "reading": reading}
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Reading generation failed: {str(e)}")
+
+
+@app.post("/v1/sessions/{session_id}/reading")
+def generate_reading(
+    session_id: str,
+    daily: bool = False,
+    user: Optional[dict] = Depends(get_current_user_optional)
+):
+    """
+    Generate full reading with complete LLM synthesis.
+    Only callable after payment verification.
+    """
+    return _build_session_reading_response(session_id=session_id, user=user, daily=daily)
+
+
+@app.get("/v1/sessions/{session_id}/reading/stream")
+def stream_reading(
+    session_id: str,
+    daily: bool = False,
+    user: Optional[dict] = Depends(get_current_user_optional),
+):
+    def event_stream():
+        try:
+            response = _build_session_reading_response(session_id=session_id, user=user, daily=daily)
+            reading = response.get("reading") or {}
+            yield from _iter_reading_section_events(reading=reading, session_id=session_id)
+        except HTTPException as exc:
+            yield _serialize_sse_event(
+                "reading_failed",
+                {
+                    "session_id": session_id,
+                    "status_code": exc.status_code,
+                    "detail": exc.detail,
+                },
+            )
+        except Exception as exc:
+            yield _serialize_sse_event(
+                "reading_failed",
+                {
+                    "session_id": session_id,
+                    "status_code": 500,
+                    "detail": str(exc),
+                },
+            )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/v1/sessions/{session_id}/cost")

@@ -216,6 +216,28 @@ def _compat_people() -> dict:
 
 
 
+def _read_sse_events(response) -> list[tuple[str, dict]]:
+    events: list[tuple[str, dict]] = []
+    current_event = None
+    current_data = None
+    for raw_line in response.iter_lines():
+        line = raw_line.decode() if isinstance(raw_line, bytes) else raw_line
+        if not line:
+            if current_event is not None and current_data is not None:
+                events.append((current_event, main.json.loads(current_data)))
+            current_event = None
+            current_data = None
+            continue
+        if line.startswith("event: "):
+            current_event = line.split(": ", 1)[1]
+        elif line.startswith("data: "):
+            current_data = line.split(": ", 1)[1]
+    if current_event is not None and current_data is not None:
+        events.append((current_event, main.json.loads(current_data)))
+    return events
+
+
+
 def test_combined_preview_api_persists_preview_metadata(client: TestClient) -> None:
     session_id = _create_session(client)
     _update_session(
@@ -343,6 +365,87 @@ def test_compatibility_full_reading_api_enforces_purchase_then_persists_reading(
     assert row["reading"]["sections"][1]["id"] == "growth"
     assert row["reading_persona_id"] == "sit-compat-reading-persona"
     assert row["reading_prompt_version"] == "sit-v3"
+
+
+
+def test_combined_full_reading_stream_emits_ordered_section_events_and_completion(client: TestClient) -> None:
+    session_id = _create_session(client)
+    _update_session(
+        client,
+        session_id,
+        question_intention="What should I focus on in this transition?",
+        birth_date="1990-01-01",
+        birth_time="09:15",
+        birth_location_text="Melbourne, Australia",
+        flow_type="combined",
+        selected_tier="basic",
+    )
+
+    client.post(f"/v1/sessions/{session_id}/tarot")
+    preview_response = client.post(f"/v1/sessions/{session_id}/preview")
+    assert preview_response.status_code == 200, preview_response.text
+    purchase = client.post(
+        f"/v1/sessions/{session_id}/purchase",
+        json={"product_id": ProductSKU.READING_BASIC, "transaction_id": f"txn-{uuid.uuid4()}"},
+    )
+    assert purchase.status_code == 200, purchase.text
+
+    with client.stream("GET", f"/v1/sessions/{session_id}/reading/stream") as response:
+        assert response.status_code == 200, response.text
+        assert response.headers["content-type"].startswith("text/event-stream")
+        events = _read_sse_events(response)
+
+    event_names = [name for name, _ in events]
+    assert event_names == [
+        "reading_started",
+        "section_completed",
+        "section_completed",
+        "reading_completed",
+    ]
+    assert events[0][1]["section_count"] == 2
+    assert events[1][1]["order"] == 1
+    assert events[1][1]["section"]["id"] == "overview"
+    assert events[2][1]["order"] == 2
+    assert events[2][1]["section"]["id"] == "guidance"
+    assert events[3][1]["reading"]["sections"][1]["id"] == "guidance"
+
+
+
+def test_combined_full_reading_stream_emits_reading_failed_on_error(client: TestClient, monkeypatch) -> None:
+    session_id = _create_session(client)
+    _update_session(
+        client,
+        session_id,
+        question_intention="What should I focus on in this transition?",
+        birth_date="1990-01-01",
+        birth_time="09:15",
+        birth_location_text="Melbourne, Australia",
+        flow_type="combined",
+        selected_tier="basic",
+    )
+
+    client.post(f"/v1/sessions/{session_id}/tarot")
+    preview_response = client.post(f"/v1/sessions/{session_id}/preview")
+    assert preview_response.status_code == 200, preview_response.text
+    purchase = client.post(
+        f"/v1/sessions/{session_id}/purchase",
+        json={"product_id": ProductSKU.READING_BASIC, "transaction_id": f"txn-{uuid.uuid4()}"},
+    )
+    assert purchase.status_code == 200, purchase.text
+
+    class _BrokenOrchestrator(_FakeOrchestrator):
+        def build_session_reading_result(self, **kwargs):
+            raise RuntimeError("stream contract failure test")
+
+    monkeypatch.setattr(main, "get_generation_orchestrator", lambda: _BrokenOrchestrator())
+
+    with client.stream("GET", f"/v1/sessions/{session_id}/reading/stream") as response:
+        assert response.status_code == 200, response.text
+        events = _read_sse_events(response)
+
+    assert [name for name, _ in events] == ["reading_failed"]
+    assert events[0][1]["status_code"] == 500
+    assert "stream contract failure test" in events[0][1]["detail"]
 
 
 
