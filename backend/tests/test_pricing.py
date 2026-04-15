@@ -23,6 +23,10 @@ def test_validate_purchase_requires_prerequisite_for_addon() -> None:
     assert validate_purchase(ProductSKU.PALM_ADDON, [ProductSKU.READING_BASIC]) is True
 
 
+def test_validate_purchase_allows_daruma_blessing_unlock() -> None:
+    assert validate_purchase(ProductSKU.DARUMA_BLESSING, []) is True
+
+
 def test_lunar_forecast_seasonal_window() -> None:
     product = PRODUCTS[ProductSKU.LUNAR_FORECAST]
 
@@ -71,6 +75,13 @@ def test_complete_reading_copy_avoids_hard_ai_claim_language() -> None:
 
     assert 'AI palm analysis' not in product['description']
     assert 'automated palm interpretation' in product['description']
+
+
+def test_daruma_blessing_product_has_expected_price() -> None:
+    product = PRODUCTS[ProductSKU.DARUMA_BLESSING]
+
+    assert product["price_usd"] == 1.99
+    assert product["price_after_apple_cut"] == 1.39
 
 
 def test_calculate_revenue_sums_known_products_only() -> None:

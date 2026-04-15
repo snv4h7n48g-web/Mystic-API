@@ -163,6 +163,8 @@ CREATE TABLE IF NOT EXISTS compatibility_readings (
     person2_data JSONB,
     preview JSONB,
     reading JSONB,
+    preview_cost_usd NUMERIC(10, 6),
+    reading_cost_usd NUMERIC(10, 6),
     purchased BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT now()
 );

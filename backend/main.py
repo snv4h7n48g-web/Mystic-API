@@ -1,5 +1,6 @@
-from fastapi import FastAPI, HTTPException, Depends, Body
-from fastapi.responses import StreamingResponse
+import logging
+from fastapi import FastAPI, HTTPException, Depends, Body, Request
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 from sqlalchemy import create_engine, text
@@ -25,6 +26,8 @@ from pricing import ProductSKU, get_product, has_feature, validate_purchase, cal
 from auth_service import get_auth_service
 from user_service import get_user_service
 from purchase_verification import get_purchase_verification_service
+from deployment_env import app_env, database_url, is_production
+from observability import configure_logging, get_logger, log_event
 from auth_dependencies import get_current_user, get_current_user_optional, require_admin
 from models import (
     UserCreate, UserLogin, AppleSignIn,
@@ -36,14 +39,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Load environment variables
 load_dotenv()
+configure_logging()
+logger = get_logger("main")
 
 # =====================
 # APP
 # =====================
 
 app = FastAPI(title="Mystic API", version="0.1")
-APP_ENV = os.getenv("APP_ENV", "development").strip().lower() or "development"
-IS_PRODUCTION = APP_ENV == "production"
+APP_ENV = app_env()
+IS_PRODUCTION = is_production()
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -57,12 +62,7 @@ USE_PERSONA_ORCHESTRATION = _env_flag("MYSTIC_USE_PERSONA_ORCHESTRATION", True)
 
 
 def _database_url() -> str:
-    configured = os.getenv("DATABASE_URL", "").strip()
-    if configured:
-        return configured
-    if IS_PRODUCTION:
-        raise RuntimeError("DATABASE_URL must be set when APP_ENV=production")
-    return "postgresql+psycopg2://mystic:mysticpass@localhost:5432/mystic"
+    return database_url()
 
 
 def _cors_allowed_origins() -> List[str]:
@@ -94,6 +94,54 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    request.state.request_id = request_id
+    started = time.perf_counter()
+
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        log_event(
+            logger,
+            logging.ERROR,
+            "request failed",
+            event="request_failed",
+            exc_info=exc,
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            query=request.url.query,
+            duration_ms=duration_ms,
+            client_ip=request.client.host if request.client else None,
+        )
+        raise
+
+    duration_ms = round((time.perf_counter() - started) * 1000, 2)
+    response.headers["X-Request-ID"] = request_id
+    level = logging.INFO
+    if response.status_code >= 500:
+        level = logging.ERROR
+    elif response.status_code >= 400:
+        level = logging.WARNING
+    log_event(
+        logger,
+        level,
+        "request completed",
+        event="request_completed",
+        request_id=request_id,
+        method=request.method,
+        path=request.url.path,
+        query=request.url.query,
+        status_code=response.status_code,
+        duration_ms=duration_ms,
+        client_ip=request.client.host if request.client else None,
+    )
+    return response
 
 
 # =====================
@@ -171,6 +219,8 @@ def init_db():
         conn.execute(text("ALTER TABLE compatibility_readings ADD COLUMN IF NOT EXISTS reading_theme_tags JSONB"))
         conn.execute(text("ALTER TABLE compatibility_readings ADD COLUMN IF NOT EXISTS preview_headline TEXT"))
         conn.execute(text("ALTER TABLE compatibility_readings ADD COLUMN IF NOT EXISTS reading_headline TEXT"))
+        conn.execute(text("ALTER TABLE compatibility_readings ADD COLUMN IF NOT EXISTS preview_cost_usd NUMERIC(10, 6)"))
+        conn.execute(text("ALTER TABLE compatibility_readings ADD COLUMN IF NOT EXISTS reading_cost_usd NUMERIC(10, 6)"))
 
         # Blessing offerings table
         conn.execute(text(BLESSING_OFFERINGS_TABLE_SCHEMA))
@@ -238,6 +288,9 @@ class SessionUpdate(BaseModel):
     question_intention: Optional[str] = None
     selected_tier: Optional[str] = None
     flow_type: Optional[str] = None
+    daruma_tone: Optional[str] = None
+    daruma_fate_edit: Optional[str] = None
+    daruma_wish: Optional[str] = None
     bundle_id: Optional[str] = None
     bundle_step: Optional[str] = None
     bundle_steps_completed: Optional[List[str]] = None
@@ -444,12 +497,13 @@ def db_create_compatibility(user_id: Optional[str]) -> str:
         conn.execute(
             text("""
             INSERT INTO compatibility_readings (
-                id, user_id, person1_data, person2_data, preview, reading, purchased
+                id, user_id, person1_data, person2_data, preview, reading,
+                preview_cost_usd, reading_cost_usd, purchased
             )
             VALUES (
                 :id, :user_id, CAST(:person1_data AS jsonb),
                 CAST(:person2_data AS jsonb), CAST(:preview AS jsonb),
-                CAST(:reading AS jsonb), :purchased
+                CAST(:reading AS jsonb), :preview_cost_usd, :reading_cost_usd, :purchased
             )
             """),
             {
@@ -459,6 +513,8 @@ def db_create_compatibility(user_id: Optional[str]) -> str:
                 "person2_data": json.dumps({}),
                 "preview": json.dumps(None),
                 "reading": json.dumps(None),
+                "preview_cost_usd": None,
+                "reading_cost_usd": None,
                 "purchased": False
             }
         )
@@ -716,7 +772,23 @@ def draw_tarot(card_count: int = 3):
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return {"ok": True, "environment": APP_ENV}
+
+
+def _database_ping() -> bool:
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
+
+
+@app.get("/health/ready")
+def readiness():
+    if not _database_ping():
+        return JSONResponse(status_code=503, content={"ok": False, "ready": False, "database": "unreachable"})
+    return {"ok": True, "ready": True, "database": "reachable", "environment": APP_ENV}
 
 
 def _normalize_location_display(location_text: str) -> str:
@@ -1109,7 +1181,7 @@ def _build_astrology_profile_for_user(user: dict) -> Optional[Dict[str, Any]]:
 
 
 def _flow_is_free(flow_type: str) -> bool:
-    return flow_type == "blessing_solo"
+    return False
 
 
 def _session_content_contract(session: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1266,11 +1338,59 @@ def _required_session_product_id(session: Optional[Dict[str, Any]]) -> Optional[
     if flow_type == "lunar_new_year_solo":
         return ProductSKU.LUNAR_FORECAST
 
+    if flow_type == "blessing_solo":
+        return ProductSKU.DARUMA_BLESSING
+
     selected_tier = (inputs.get("selected_tier") or "").lower()
     if selected_tier == "complete":
         return ProductSKU.READING_COMPLETE
 
     return ProductSKU.READING_BASIC
+
+
+def _session_preview_unlock_contract(
+    session: Optional[Dict[str, Any]],
+    user: Optional[dict],
+) -> Dict[str, Any]:
+    session = session or {}
+    subscription_included = _has_active_subscription(user)
+    if subscription_included:
+        return {
+            "unlock_amount": 0.0,
+            "product_id": ProductSKU.DAILY_ASTRO_TAROT,
+            "subscription_active": True,
+            "session_unlocked": False,
+        }
+
+    required_product_id = _required_session_product_id(session)
+    purchased = session.get("purchased_products") or []
+    owned_products = _verified_products_for_user(user)
+    session_unlocked = bool(required_product_id) and (
+        required_product_id in purchased or required_product_id in owned_products
+    )
+    if session_unlocked:
+        return {
+            "unlock_amount": 0.0,
+            "product_id": required_product_id,
+            "subscription_active": False,
+            "session_unlocked": True,
+        }
+
+    if required_product_id:
+        product = PRODUCTS.get(required_product_id)
+        return {
+            "unlock_amount": float((product or {}).get("price_usd", 0.0)),
+            "product_id": required_product_id,
+            "subscription_active": False,
+            "session_unlocked": False,
+        }
+
+    return {
+        "unlock_amount": 0.0,
+        "product_id": "",
+        "subscription_active": False,
+        "session_unlocked": False,
+    }
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -1298,10 +1418,43 @@ def _verify_purchase_or_raise(
             is_subscription=is_subscription,
         )
     except ValueError as exc:
+        log_event(
+            logger,
+            logging.WARNING,
+            "purchase verification failed",
+            event="purchase_verification_failed",
+            exc_info=exc,
+            product_id=product_id,
+            platform=platform,
+            is_subscription=is_subscription,
+            transaction_id=transaction_id,
+        )
         raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "purchase verification runtime error",
+            event="purchase_verification_runtime_error",
+            exc_info=exc,
+            product_id=product_id,
+            platform=platform,
+            is_subscription=is_subscription,
+            transaction_id=transaction_id,
+        )
         raise HTTPException(501, str(exc)) from exc
     except NotImplementedError as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "purchase verification not implemented",
+            event="purchase_verification_not_implemented",
+            exc_info=exc,
+            product_id=product_id,
+            platform=platform,
+            is_subscription=is_subscription,
+            transaction_id=transaction_id,
+        )
         raise HTTPException(501, str(exc)) from exc
 
 
@@ -1444,8 +1597,35 @@ def update_session(
     _assert_session_access(session_id, user)
 
     inputs = session["inputs"] or {}
-    inputs.update(payload.dict(exclude_none=True))
-    db_update_session(session_id, inputs=inputs)
+    updates = payload.dict(exclude_none=True)
+    inputs.update(updates)
+
+    invalidates_generated_content = any(
+        field in updates
+        for field in {
+            "birth_date",
+            "lunar_birth_year",
+            "birth_time",
+            "birth_time_unknown",
+            "birth_location_text",
+            "question_intention",
+            "selected_tier",
+            "flow_type",
+            "daruma_tone",
+            "daruma_fate_edit",
+            "daruma_wish",
+        }
+    )
+
+    db_fields: Dict[str, Any] = {"inputs": inputs}
+    if invalidates_generated_content:
+        db_fields.update({
+            "preview": None,
+            "reading": None,
+            "status": "draft",
+        })
+
+    db_update_session(session_id, **db_fields)
 
     return {"ok": True}
 
@@ -1540,15 +1720,22 @@ def generate_preview(
     # If preview already exists, return it (no new LLM call).
     if session.get("preview"):
         preview_existing = session["preview"]
-        if _has_active_subscription(user):
-            if isinstance(preview_existing, dict):
-                preview_existing = dict(preview_existing)
-                preview_existing["unlock_price"] = {"currency": "USD", "amount": 0.0}
-                entitlements = preview_existing.get("entitlements") or {}
-                if not isinstance(entitlements, dict):
-                    entitlements = {}
-                entitlements["subscription_active"] = True
-                preview_existing["entitlements"] = entitlements
+        if isinstance(preview_existing, dict):
+            preview_existing = dict(preview_existing)
+            unlock_contract = _session_preview_unlock_contract(session, user)
+            preview_existing["unlock_price"] = {
+                "currency": "USD",
+                "amount": unlock_contract["unlock_amount"],
+            }
+            preview_existing["product_id"] = unlock_contract["product_id"]
+            entitlements = preview_existing.get("entitlements") or {}
+            if not isinstance(entitlements, dict):
+                entitlements = {}
+            entitlements["subscription_active"] = unlock_contract[
+                "subscription_active"
+            ]
+            entitlements["session_unlocked"] = unlock_contract["session_unlocked"]
+            preview_existing["entitlements"] = entitlements
         if session.get("status") != "preview_ready":
             db_update_session(session_id, status="preview_ready")
         completed_at = time.perf_counter()
@@ -1669,39 +1856,23 @@ def generate_preview(
             ]
 
         # Generate preview teaser using Bedrock
+        unlock_contract = _session_preview_unlock_contract(session, user)
         if USE_PERSONA_ORCHESTRATION:
             orchestrator = get_generation_orchestrator()
-            subscription_included = _has_active_subscription(user)
-            bundle_product = _bundle_product_for_inputs(inputs)
-            if subscription_included:
-                unlock_amount = 0.0
-                product_id = ProductSKU.DAILY_ASTRO_TAROT
-            elif flow_type == "blessing_solo":
-                unlock_amount = 0.0
-                product_id = ""
-            elif bundle_product and flow_type == "combined":
-                unlock_amount = float(bundle_product.get("price_usd", 0.0))
-                product_id = bundle_product["id"]
-            elif flow_type == "lunar_new_year_solo":
-                unlock_amount = 1.00
-                product_id = ProductSKU.LUNAR_FORECAST
-            else:
-                selected_tier = (inputs.get("selected_tier") or "").lower()
-                if selected_tier == "complete":
-                    unlock_amount = 2.99
-                    product_id = ProductSKU.READING_COMPLETE
-                else:
-                    unlock_amount = 1.99
-                    product_id = ProductSKU.READING_BASIC
-
             orchestration_result = orchestrator.build_session_preview_result(
                 session=session,
                 user=user,
                 astrology_facts=astrology_facts,
                 tarot_payload=tarot_payload,
-                unlock_price={"currency": "USD", "amount": unlock_amount},
-                product_id=product_id,
-                entitlements={"subscription_active": subscription_included},
+                unlock_price={
+                    "currency": "USD",
+                    "amount": unlock_contract["unlock_amount"],
+                },
+                product_id=unlock_contract["product_id"],
+                entitlements={
+                    "subscription_active": unlock_contract["subscription_active"],
+                    "session_unlocked": unlock_contract["session_unlocked"],
+                },
             )
             llm_result = {
                 "teaser_text": orchestration_result.payload["teaser_text"],
@@ -1717,6 +1888,15 @@ def generate_preview(
                     "headline": orchestration_result.metadata.headline,
                 },
             }
+            _log_llm_usage(
+                operation="build_session_preview_result",
+                model_id=orchestration_result.metadata.model_id,
+                input_tokens=orchestration_result.input_tokens,
+                output_tokens=orchestration_result.output_tokens,
+                cost_usd=orchestration_result.cost_usd,
+                session_id=session_id,
+                flow_type=flow_type,
+            )
         else:
             llm_result = bedrock.generate_preview_teaser(
                 question=inputs["question_intention"],
@@ -1726,30 +1906,6 @@ def generate_preview(
                 flow_type=flow_type,
             )
 
-        # Determine pricing and product based on tier, bundle, or subscription.
-        subscription_included = _has_active_subscription(user)
-        bundle_product = _bundle_product_for_inputs(inputs)
-        if subscription_included:
-            unlock_amount = 0.0
-            product_id = ProductSKU.DAILY_ASTRO_TAROT
-        elif flow_type == "blessing_solo":
-            unlock_amount = 0.0
-            product_id = ""
-        elif bundle_product and flow_type == "combined":
-            unlock_amount = float(bundle_product.get("price_usd", 0.0))
-            product_id = bundle_product["id"]
-        elif flow_type == "lunar_new_year_solo":
-            unlock_amount = 1.00
-            product_id = ProductSKU.LUNAR_FORECAST
-        else:
-            selected_tier = (inputs.get("selected_tier") or "").lower()
-            if selected_tier == "complete":
-                unlock_amount = 2.99
-                product_id = ProductSKU.READING_COMPLETE
-            else:
-                unlock_amount = 1.99
-                product_id = ProductSKU.READING_BASIC
-
         # Build preview response
         generated_at = datetime.now(timezone.utc).isoformat()
         preview = {
@@ -1757,20 +1913,25 @@ def generate_preview(
             "astrology_facts": astrology_facts,
             "tarot": tarot_payload,
             "teaser_text": llm_result["teaser_text"],
-            "unlock_price": {"currency": "USD", "amount": unlock_amount},
-            "product_id": product_id,
+            "unlock_price": {
+                "currency": "USD",
+                "amount": unlock_contract["unlock_amount"],
+            },
+            "product_id": unlock_contract["product_id"],
             "content_contract": _session_content_contract(session),
             "generated_at": generated_at,
             "seasonal": {
                 "lunar_new_year": _is_lunar_new_year_season()
             },
             "entitlements": {
-                "subscription_active": subscription_included,
+                "subscription_active": unlock_contract["subscription_active"],
+                "session_unlocked": unlock_contract["session_unlocked"],
             },
             "llm_metadata": {
                 "model": llm_result["model"],
                 "input_tokens": llm_result["input_tokens"],
-                "output_tokens": llm_result["output_tokens"]
+                "output_tokens": llm_result["output_tokens"],
+                "cost_usd": llm_result["cost_usd"],
             }
         }
         if isinstance(llm_result.get("meta"), dict):
@@ -1830,6 +1991,35 @@ def _build_route_timing(
         "model_time_ms": round(max(0.0, (completed_at - generation_started_at) * 1000), 2),
         "time_to_first_output_ms": round(max(0.0, (first_output_at - request_started_at) * 1000), 2),
     }
+
+
+def _log_llm_usage(
+    *,
+    operation: str,
+    model_id: Optional[str],
+    input_tokens: Optional[int],
+    output_tokens: Optional[int],
+    cost_usd: Optional[float],
+    provider: str = "bedrock",
+    **fields: Any,
+) -> None:
+    safe_input_tokens = int(input_tokens or 0)
+    safe_output_tokens = int(output_tokens or 0)
+    safe_cost = round(float(cost_usd or 0.0), 6)
+    log_event(
+        logger,
+        logging.INFO,
+        "llm call completed",
+        event="llm_call_completed",
+        provider=provider,
+        operation=operation,
+        model_id=model_id,
+        input_tokens=safe_input_tokens,
+        output_tokens=safe_output_tokens,
+        total_tokens=safe_input_tokens + safe_output_tokens,
+        cost_usd=safe_cost,
+        **fields,
+    )
 
 
 def _reading_product_key(reading: Dict[str, Any]) -> Optional[str]:
@@ -2076,6 +2266,15 @@ def _build_session_reading_response(
                     "continuity_source_session_id": orchestration_result.metadata.continuity_source_session_id,
                 },
             }
+            _log_llm_usage(
+                operation="build_session_reading_result",
+                model_id=orchestration_result.metadata.model_id,
+                input_tokens=orchestration_result.input_tokens,
+                output_tokens=orchestration_result.output_tokens,
+                cost_usd=orchestration_result.cost_usd,
+                session_id=session_id,
+                flow_type=flow_type,
+            )
             reading = orchestration_result.payload
         else:
             llm_result = bedrock.generate_full_reading(
@@ -2100,6 +2299,7 @@ def _build_session_reading_response(
                     "model": llm_result["model"],
                     "input_tokens": llm_result["input_tokens"],
                     "output_tokens": llm_result["output_tokens"],
+                    "cost_usd": llm_result["cost_usd"],
                     "generated_at": generated_at,
                     "includes_palm": includes_palm,
                     "deep_access": deep_access,
@@ -2479,10 +2679,20 @@ def generate_compatibility_preview(
                 "model": orchestration_result.metadata.model_id,
                 "input_tokens": orchestration_result.input_tokens,
                 "output_tokens": orchestration_result.output_tokens,
+                "cost_usd": orchestration_result.cost_usd,
             }
+            _log_llm_usage(
+                operation="build_compatibility_preview_result",
+                model_id=orchestration_result.metadata.model_id,
+                input_tokens=orchestration_result.input_tokens,
+                output_tokens=orchestration_result.output_tokens,
+                cost_usd=orchestration_result.cost_usd,
+                compatibility_id=compat_id,
+            )
             db_update_compatibility(
                 compat_id,
                 preview=preview,
+                preview_cost_usd=orchestration_result.cost_usd,
                 preview_persona_id=orchestration_result.metadata.persona_id,
                 preview_llm_profile_id=orchestration_result.metadata.llm_profile_id,
                 preview_prompt_version=orchestration_result.metadata.prompt_version,
@@ -2490,7 +2700,14 @@ def generate_compatibility_preview(
                 preview_headline=orchestration_result.metadata.headline,
             )
         except Exception as exc:
-            print(f"Compatibility preview orchestration failed for {compat_id}: {exc}")
+            log_event(
+                logger,
+                logging.ERROR,
+                "compatibility preview orchestration failed",
+                event="compatibility_preview_orchestration_failed",
+                exc_info=exc,
+                compatibility_id=compat_id,
+            )
 
     if preview is None:
         llm_result = bedrock.generate_compatibility_preview(
@@ -2512,11 +2729,16 @@ def generate_compatibility_preview(
             "llm_metadata": {
                 "model": llm_result["model"],
                 "input_tokens": llm_result["input_tokens"],
-                "output_tokens": llm_result["output_tokens"]
+                "output_tokens": llm_result["output_tokens"],
+                "cost_usd": llm_result["cost_usd"],
             }
         }
 
-        db_update_compatibility(compat_id, preview=preview)
+        db_update_compatibility(
+            compat_id,
+            preview=preview,
+            preview_cost_usd=llm_result["cost_usd"],
+        )
     return {"status": "preview_ready", "preview": preview}
 
 
@@ -2645,11 +2867,21 @@ def generate_compatibility_reading(
                     "model": orchestration_result.metadata.model_id,
                     "input_tokens": orchestration_result.input_tokens,
                     "output_tokens": orchestration_result.output_tokens,
+                    "cost_usd": orchestration_result.cost_usd,
                 }
+            )
+            _log_llm_usage(
+                operation="build_compatibility_reading_result",
+                model_id=orchestration_result.metadata.model_id,
+                input_tokens=orchestration_result.input_tokens,
+                output_tokens=orchestration_result.output_tokens,
+                cost_usd=orchestration_result.cost_usd,
+                compatibility_id=compat_id,
             )
             db_update_compatibility(
                 compat_id,
                 reading=reading,
+                reading_cost_usd=orchestration_result.cost_usd,
                 reading_persona_id=orchestration_result.metadata.persona_id,
                 reading_llm_profile_id=orchestration_result.metadata.llm_profile_id,
                 reading_prompt_version=orchestration_result.metadata.prompt_version,
@@ -2657,7 +2889,14 @@ def generate_compatibility_reading(
                 reading_headline=orchestration_result.metadata.headline,
             )
         except Exception as exc:
-            print(f"Compatibility reading orchestration failed for {compat_id}: {exc}")
+            log_event(
+                logger,
+                logging.ERROR,
+                "compatibility reading orchestration failed",
+                event="compatibility_reading_orchestration_failed",
+                exc_info=exc,
+                compatibility_id=compat_id,
+            )
 
     if reading is None:
         llm_result = bedrock.generate_compatibility_reading(
@@ -2674,11 +2913,16 @@ def generate_compatibility_reading(
                 "model": llm_result["model"],
                 "input_tokens": llm_result["input_tokens"],
                 "output_tokens": llm_result["output_tokens"],
+                "cost_usd": llm_result["cost_usd"],
                 "generated_at": datetime.now(timezone.utc).isoformat()
             }
         }
 
-        db_update_compatibility(compat_id, reading=reading)
+        db_update_compatibility(
+            compat_id,
+            reading=reading,
+            reading_cost_usd=llm_result["cost_usd"],
+        )
     return {"status": "complete", "reading": reading}
 
 
@@ -2981,6 +3225,14 @@ def generate_feng_shui_analysis(
                 "cost_usd": orchestration_result.cost_usd,
             }
         )
+        _log_llm_usage(
+            operation="build_feng_shui_analysis_result",
+            model_id=orchestration_result.metadata.model_id,
+            input_tokens=orchestration_result.input_tokens,
+            output_tokens=orchestration_result.output_tokens,
+            cost_usd=orchestration_result.cost_usd,
+            analysis_id=analysis_id,
+        )
         llm_cost = orchestration_result.cost_usd
         db_update_feng_shui(
             analysis_id,
@@ -3220,6 +3472,19 @@ def record_purchase(
             "purchased_products": purchased,
             "subscription_active": True,
         }
+
+    owned_products = _verified_products_for_user(user)
+    if payload.product_id in purchased or payload.product_id in owned_products:
+        if payload.product_id not in purchased:
+            purchased = [*purchased, payload.product_id]
+            db_update_session(session_id, purchased_products=purchased)
+        return {
+            "status": "already_purchased",
+            "product_id": payload.product_id,
+            "transaction_id": payload.transaction_id,
+            "purchased_products": purchased,
+            "subscription_active": _has_active_subscription(user),
+        }
     
     contract_matched_session_unlock = (
         required_product_id is not None
@@ -3243,7 +3508,8 @@ def record_purchase(
     )
 
     # Add to purchased products
-    purchased.append(payload.product_id)
+    if payload.product_id not in purchased:
+        purchased.append(payload.product_id)
 
     # Update session
     db_update_session(session_id, purchased_products=purchased)
@@ -4214,7 +4480,10 @@ def get_admin_summary(user: dict = Depends(require_admin)):
             SELECT
               COALESCE(SUM(preview_cost_usd), 0) as preview_cost,
               COALESCE(SUM(reading_cost_usd), 0) as reading_cost,
-              COALESCE(SUM(palm_cost_usd), 0) as palm_cost
+              COALESCE(SUM(palm_cost_usd), 0) as palm_cost,
+              COUNT(preview_cost_usd) as preview_cost_count,
+              COUNT(reading_cost_usd) as reading_cost_count,
+              COUNT(palm_cost_usd) as palm_cost_count
             FROM sessions
             """)
         ).mappings().first()
@@ -4223,7 +4492,8 @@ def get_admin_summary(user: dict = Depends(require_admin)):
             SELECT
               COUNT(*) as feng_total,
               SUM(CASE WHEN purchased THEN 1 ELSE 0 END) as feng_purchased,
-              COALESCE(SUM(cost_usd), 0) as feng_cost
+              COALESCE(SUM(cost_usd), 0) as feng_cost,
+              COUNT(cost_usd) as feng_cost_count
             FROM feng_shui_analyses
             """)
         ).mappings().first()
@@ -4231,7 +4501,11 @@ def get_admin_summary(user: dict = Depends(require_admin)):
             text("""
             SELECT
               COUNT(*) as comp_total,
-              SUM(CASE WHEN purchased THEN 1 ELSE 0 END) as comp_purchased
+              SUM(CASE WHEN purchased THEN 1 ELSE 0 END) as comp_purchased,
+              COALESCE(SUM(preview_cost_usd), 0) as comp_preview_cost,
+              COALESCE(SUM(reading_cost_usd), 0) as comp_reading_cost,
+              COUNT(preview_cost_usd) as comp_preview_cost_count,
+              COUNT(reading_cost_usd) as comp_reading_cost_count
             FROM compatibility_readings
             """)
         ).mappings().first()
@@ -4257,6 +4531,37 @@ def get_admin_summary(user: dict = Depends(require_admin)):
         except Exception:
             continue
 
+    session_preview_cost = float(costs_row["preview_cost"] or 0.0) if costs_row else 0.0
+    session_reading_cost = float(costs_row["reading_cost"] or 0.0) if costs_row else 0.0
+    palm_cost = float(costs_row["palm_cost"] or 0.0) if costs_row else 0.0
+    feng_cost = float(feng_row["feng_cost"] or 0.0) if feng_row else 0.0
+    comp_preview_cost = float(comp_row["comp_preview_cost"] or 0.0) if comp_row else 0.0
+    comp_reading_cost = float(comp_row["comp_reading_cost"] or 0.0) if comp_row else 0.0
+
+    session_preview_count = int(costs_row["preview_cost_count"] or 0) if costs_row else 0
+    session_reading_count = int(costs_row["reading_cost_count"] or 0) if costs_row else 0
+    palm_count = int(costs_row["palm_cost_count"] or 0) if costs_row else 0
+    feng_count = int(feng_row["feng_cost_count"] or 0) if feng_row else 0
+    comp_preview_count = int(comp_row["comp_preview_cost_count"] or 0) if comp_row else 0
+    comp_reading_count = int(comp_row["comp_reading_cost_count"] or 0) if comp_row else 0
+
+    sessions_total_cost = session_preview_cost + session_reading_cost + palm_cost
+    compatibility_total_cost = comp_preview_cost + comp_reading_cost
+    total_llm_cost = sessions_total_cost + compatibility_total_cost + feng_cost
+    total_llm_calls = (
+        session_preview_count
+        + session_reading_count
+        + palm_count
+        + feng_count
+        + comp_preview_count
+        + comp_reading_count
+    )
+
+    def avg_cost(total: float, count: int) -> float:
+        if count <= 0:
+            return 0.0
+        return round(total / count, 6)
+
     summary = {
         "users": {
             "total": int(users_row["total_users"]) if users_row else 0,
@@ -4269,10 +4574,15 @@ def get_admin_summary(user: dict = Depends(require_admin)):
             "readings": int(status_row["readings"] or 0) if status_row else 0
         },
         "costs": {
-            "preview_usd": float(costs_row["preview_cost"]) if costs_row else 0.0,
-            "reading_usd": float(costs_row["reading_cost"]) if costs_row else 0.0,
-            "palm_usd": float(costs_row["palm_cost"]) if costs_row else 0.0,
-            "feng_shui_usd": float(feng_row["feng_cost"]) if feng_row else 0.0
+            "preview_usd": session_preview_cost,
+            "reading_usd": session_reading_cost,
+            "palm_usd": palm_cost,
+            "feng_shui_usd": feng_cost,
+            "compatibility_preview_usd": comp_preview_cost,
+            "compatibility_reading_usd": comp_reading_cost,
+            "sessions_total_usd": round(sessions_total_cost, 6),
+            "compatibility_total_usd": round(compatibility_total_cost, 6),
+            "total_llm_usd": round(total_llm_cost, 6),
         },
         "feng_shui": {
             "total": int(feng_row["feng_total"] or 0) if feng_row else 0,
@@ -4280,7 +4590,25 @@ def get_admin_summary(user: dict = Depends(require_admin)):
         },
         "compatibility": {
             "total": int(comp_row["comp_total"] or 0) if comp_row else 0,
-            "purchased": int(comp_row["comp_purchased"] or 0) if comp_row else 0
+            "purchased": int(comp_row["comp_purchased"] or 0) if comp_row else 0,
+            "preview_cost_usd": comp_preview_cost,
+            "reading_cost_usd": comp_reading_cost,
+        },
+        "llm_usage": {
+            "total_calls": total_llm_calls,
+            "session_preview_calls": session_preview_count,
+            "session_reading_calls": session_reading_count,
+            "palm_calls": palm_count,
+            "compatibility_preview_calls": comp_preview_count,
+            "compatibility_reading_calls": comp_reading_count,
+            "feng_shui_calls": feng_count,
+            "average_cost_per_call_usd": avg_cost(total_llm_cost, total_llm_calls),
+            "average_session_preview_cost_usd": avg_cost(session_preview_cost, session_preview_count),
+            "average_session_reading_cost_usd": avg_cost(session_reading_cost, session_reading_count),
+            "average_palm_cost_usd": avg_cost(palm_cost, palm_count),
+            "average_compatibility_preview_cost_usd": avg_cost(comp_preview_cost, comp_preview_count),
+            "average_compatibility_reading_cost_usd": avg_cost(comp_reading_cost, comp_reading_count),
+            "average_feng_shui_cost_usd": avg_cost(feng_cost, feng_count),
         },
         "blessings": {
             "total_offerings": int(offering_row["total_offerings"] or 0) if offering_row else 0,
@@ -4288,7 +4616,8 @@ def get_admin_summary(user: dict = Depends(require_admin)):
         },
         "revenue": {
             "gross_usd": round(revenue_gross, 2),
-            "net_usd": round(revenue_net, 2)
+            "net_usd": round(revenue_net, 2),
+            "net_after_llm_usd": round(revenue_net - total_llm_cost, 2),
         }
     }
 

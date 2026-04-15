@@ -7,12 +7,12 @@ import random
 import time
 from typing import List, Dict, Any
 import boto3
+from deployment_env import aws_client_kwargs
 
 
 class FengShuiVisionService:
     def __init__(self):
-        region = os.getenv('AWS_REGION', 'us-east-1')
-        self.client = boto3.client('bedrock-runtime', region_name=region)
+        self.client = boto3.client(**aws_client_kwargs('bedrock-runtime'))
         self.model_id = os.getenv('FENG_SHUI_VISION_MODEL', 'us.amazon.nova-pro-v1:0')
 
         self.costs = {

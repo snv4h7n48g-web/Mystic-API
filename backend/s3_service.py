@@ -7,6 +7,7 @@ import boto3
 import os
 import uuid
 from typing import Dict, Any
+from deployment_env import aws_client_kwargs, aws_region
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,23 +18,8 @@ class S3Service:
     
     def __init__(self):
         """Initialize S3 client."""
-        # Get credentials from environment
-        aws_access_key = os.getenv('AWS_ACCESS_KEY_ID')
-        aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
-        region = os.getenv('AWS_REGION', 'us-east-1')
-        
-        # Build client kwargs
-        client_kwargs = {
-            'service_name': 's3',
-            'region_name': region
-        }
-        
-        # Only add explicit credentials if they're set
-        if aws_access_key and aws_access_key != 'your_access_key_here':
-            client_kwargs['aws_access_key_id'] = aws_access_key
-            client_kwargs['aws_secret_access_key'] = aws_secret_key
-        
-        self.client = boto3.client(**client_kwargs)
+        region = aws_region()
+        self.client = boto3.client(**aws_client_kwargs('s3'))
         
         # S3 bucket configuration
         self.bucket_name = os.getenv('S3_BUCKET_NAME', 'mystic-palm-images')

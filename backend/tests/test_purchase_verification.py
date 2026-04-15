@@ -58,6 +58,18 @@ def test_ios_verification_readiness_detects_app_store_config(monkeypatch) -> Non
     assert service.verification_ready("android") is False
 
 
+def test_android_verification_readiness_detects_google_play_config(monkeypatch) -> None:
+    monkeypatch.setenv("GOOGLE_PLAY_PACKAGE_NAME", "com.example.mystic")
+    monkeypatch.setenv(
+        "GOOGLE_SERVICE_ACCOUNT_JSON",
+        '{"client_email":"svc@example.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n"}',
+    )
+    service = PurchaseVerificationService()
+
+    assert service.verification_ready("android") is True
+    assert service.verification_ready("ios") is False
+
+
 def test_ios_receipt_verification_extracts_subscription_transaction(monkeypatch) -> None:
     monkeypatch.setenv("APPLE_SHARED_SECRET", "shared-secret")
     service = PurchaseVerificationService()
@@ -149,6 +161,80 @@ def test_ios_receipt_verification_retries_in_sandbox(monkeypatch) -> None:
     assert result.entitlement_active is True
 
 
+def test_android_product_purchase_verifies_successfully(monkeypatch) -> None:
+    monkeypatch.setenv("GOOGLE_PLAY_PACKAGE_NAME", "com.example.mystic")
+    monkeypatch.setenv(
+        "GOOGLE_SERVICE_ACCOUNT_JSON",
+        '{"client_email":"svc@example.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n"}',
+    )
+    service = PurchaseVerificationService()
+    service._get_google_access_token = lambda: "google-access-token"
+
+    calls = []
+
+    def fake_get(url, headers, timeout):
+        calls.append((url, headers, timeout))
+        return _FakeResponse(
+            {
+                "productId": "reading_basic_199",
+                "orderId": "GPA.1234-5678-9012-34567",
+                "purchaseState": 0,
+                "acknowledgementState": 1,
+            }
+        )
+
+    monkeypatch.setattr("purchase_verification.requests.get", fake_get)
+
+    result = service.verify_purchase(
+        product_id="reading_basic_199",
+        transaction_id="client_txn_1",
+        receipt_data="purchase_token_123",
+        platform="android",
+    )
+
+    assert len(calls) == 1
+    assert "/applications/com.example.mystic/purchases/products/reading_basic_199/tokens/purchase_token_123" in calls[0][0]
+    assert calls[0][1]["Authorization"] == "Bearer google-access-token"
+    assert result.verified is True
+    assert result.provider == "google_play"
+    assert result.environment == "production"
+    assert result.transaction_id == "GPA.1234-5678-9012-34567"
+    assert result.original_transaction_id == "GPA.1234-5678-9012-34567"
+    assert result.entitlement_active is True
+
+
+def test_android_product_purchase_rejects_pending_state(monkeypatch) -> None:
+    monkeypatch.setenv("GOOGLE_PLAY_PACKAGE_NAME", "com.example.mystic")
+    monkeypatch.setenv(
+        "GOOGLE_SERVICE_ACCOUNT_JSON",
+        '{"client_email":"svc@example.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n"}',
+    )
+    service = PurchaseVerificationService()
+    service._get_google_access_token = lambda: "google-access-token"
+
+    def fake_get(url, headers, timeout):
+        return _FakeResponse(
+            {
+                "productId": "reading_basic_199",
+                "purchaseState": 2,
+            }
+        )
+
+    monkeypatch.setattr("purchase_verification.requests.get", fake_get)
+
+    try:
+        service.verify_purchase(
+            product_id="reading_basic_199",
+            transaction_id="client_txn_2",
+            receipt_data="purchase_token_456",
+            platform="android",
+        )
+    except ValueError as exc:
+        assert "pending" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
 def test_inactive_subscription_is_rejected(monkeypatch) -> None:
     monkeypatch.setenv("APPLE_SHARED_SECRET", "shared-secret")
     service = PurchaseVerificationService()
@@ -176,6 +262,89 @@ def test_inactive_subscription_is_rejected(monkeypatch) -> None:
             product_id="subscription_daily_999",
             transaction_id="txn_expired_1",
             receipt_data="signed-receipt",
+            is_subscription=True,
+        )
+    except ValueError as exc:
+        assert "not currently active" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_android_subscription_verifies_active_state(monkeypatch) -> None:
+    monkeypatch.setenv("GOOGLE_PLAY_PACKAGE_NAME", "com.example.mystic")
+    monkeypatch.setenv(
+        "GOOGLE_SERVICE_ACCOUNT_JSON",
+        '{"client_email":"svc@example.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n"}',
+    )
+    service = PurchaseVerificationService()
+    service._get_google_access_token = lambda: "google-access-token"
+    future_expiry = (datetime.now(timezone.utc) + timedelta(days=5)).isoformat().replace("+00:00", "Z")
+
+    def fake_get(url, headers, timeout):
+        return _FakeResponse(
+            {
+                "subscriptionState": "SUBSCRIPTION_STATE_ACTIVE",
+                "latestOrderId": "GPA.subs-order-1",
+                "linkedPurchaseToken": "linked_purchase_token_1",
+                "lineItems": [
+                    {
+                        "productId": "subscription_daily_999",
+                        "expiryTime": future_expiry,
+                        "autoRenewingPlan": {"autoRenewEnabled": True},
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr("purchase_verification.requests.get", fake_get)
+
+    result = service.verify_purchase(
+        product_id="subscription_daily_999",
+        transaction_id="client_sub_txn",
+        receipt_data="subscription_token_123",
+        platform="android",
+        is_subscription=True,
+    )
+
+    assert result.verified is True
+    assert result.provider == "google_play"
+    assert result.transaction_id == "GPA.subs-order-1"
+    assert result.original_transaction_id == "linked_purchase_token_1"
+    assert result.entitlement_active is True
+
+
+def test_android_subscription_rejects_inactive_state(monkeypatch) -> None:
+    monkeypatch.setenv("GOOGLE_PLAY_PACKAGE_NAME", "com.example.mystic")
+    monkeypatch.setenv(
+        "GOOGLE_SERVICE_ACCOUNT_JSON",
+        '{"client_email":"svc@example.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n"}',
+    )
+    service = PurchaseVerificationService()
+    service._get_google_access_token = lambda: "google-access-token"
+    future_expiry = (datetime.now(timezone.utc) + timedelta(days=5)).isoformat().replace("+00:00", "Z")
+
+    def fake_get(url, headers, timeout):
+        return _FakeResponse(
+            {
+                "subscriptionState": "SUBSCRIPTION_STATE_ON_HOLD",
+                "latestOrderId": "GPA.subs-order-2",
+                "lineItems": [
+                    {
+                        "productId": "subscription_daily_999",
+                        "expiryTime": future_expiry,
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr("purchase_verification.requests.get", fake_get)
+
+    try:
+        service.verify_purchase(
+            product_id="subscription_daily_999",
+            transaction_id="client_sub_txn_2",
+            receipt_data="subscription_token_456",
+            platform="android",
             is_subscription=True,
         )
     except ValueError as exc:

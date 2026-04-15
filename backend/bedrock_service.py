@@ -3,34 +3,28 @@ AWS Bedrock service for Nova LLM integration.
 Handles preview and full reading generation with cost tracking.
 """
 
+import logging
 import boto3
 import json
 import os
 import time
 from botocore.config import Config
 from typing import Dict, Any, List, Optional
+from deployment_env import aws_client_kwargs
+from observability import get_logger, log_event
 from lunar_knowledge import build_lunar_prompt_context
 from reference_knowledge import ASTROLOGY_REFERENCE, TAROT_REFERENCE, PALMISTRY_REFERENCE, VOICE_LIBRARY
 from tarot_knowledge import build_tarot_draw_prompt_context
+
+logger = get_logger("bedrock_service")
 
 
 class BedrockService:
     """Service for interacting with AWS Bedrock Nova models."""
 
     def __init__(self):
-        """Initialize Bedrock client with AWS credentials from environment or AWS CLI."""
-        aws_access_key = os.getenv('AWS_ACCESS_KEY_ID')
-        aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
-        region = os.getenv('AWS_REGION', 'us-east-1')
-
-        self._base_client_kwargs = {
-            'service_name': 'bedrock-runtime',
-            'region_name': region,
-        }
-
-        if aws_access_key and aws_access_key != 'your_access_key_here':
-            self._base_client_kwargs['aws_access_key_id'] = aws_access_key
-            self._base_client_kwargs['aws_secret_access_key'] = aws_secret_key
+        """Initialize Bedrock client with IAM roles in prod and explicit creds only in non-prod."""
+        self._base_client_kwargs = aws_client_kwargs('bedrock-runtime')
 
         self._client_cache: dict[int, Any] = {}
         self.client = self._client_for_timeout(None)
@@ -126,6 +120,34 @@ class BedrockService:
             "time_to_first_output_ms": model_duration_ms,
         }
 
+    def _log_llm_call_completed(
+        self,
+        *,
+        operation: str,
+        model_id: str,
+        input_tokens: int,
+        output_tokens: int,
+        cost_usd: float,
+        started: float,
+        response: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        timing = self._build_timing_fields(started=started, response=response)
+        log_event(
+            logger,
+            logging.INFO,
+            "bedrock llm call completed",
+            event="llm_call_completed",
+            provider="bedrock",
+            operation=operation,
+            model_id=model_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
+            cost_usd=cost_usd,
+            **timing,
+        )
+        return timing
+
     def invoke_text(
         self,
         *,
@@ -163,7 +185,15 @@ class BedrockService:
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
             cost = self._calculate_cost(model_id, input_tokens, output_tokens)
-            timing = self._build_timing_fields(started=started, response=response)
+            timing = self._log_llm_call_completed(
+                operation="invoke_text",
+                model_id=model_id,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost,
+                started=started,
+                response=response,
+            )
             return {
                 'text': output_text.strip(),
                 'input_tokens': input_tokens,
@@ -175,6 +205,16 @@ class BedrockService:
                 'timeout_ms': timeout_ms,
             }
         except Exception as e:
+            log_event(
+                logger,
+                logging.ERROR,
+                "bedrock text generation failed",
+                event="bedrock_generation_failed",
+                exc_info=e,
+                model_id=model_id,
+                timeout_ms=timeout_ms,
+                operation="invoke_text",
+            )
             raise RuntimeError(f"Bedrock text generation failed: {str(e)}")
 
     def _build_reference_block(self) -> str:
@@ -453,6 +493,7 @@ Tarot cards drawn:
 
 Generate a 2-3 sentence teaser that creates curiosity about what these elements reveal together while remaining grounded, specific, and human."""
         system, messages = self._build_messages(system_prompt, user_content)
+        started = time.perf_counter()
         try:
             response = self.client.converse(modelId=self.preview_model, messages=messages, system=[{"text": system}], inferenceConfig={"maxTokens": self.preview_max_tokens, "temperature": 0.7, "topP": 0.92})
             output_text = response['output']['message']['content'][0]['text']
@@ -460,8 +501,26 @@ Generate a 2-3 sentence teaser that creates curiosity about what these elements 
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
             cost = self._calculate_cost(self.preview_model, input_tokens, output_tokens)
-            return {'teaser_text': output_text.strip(), 'input_tokens': input_tokens, 'output_tokens': output_tokens, 'cost_usd': cost, 'model': self.preview_model}
+            timing = self._log_llm_call_completed(
+                operation="generate_preview_teaser",
+                model_id=self.preview_model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost,
+                started=started,
+                response=response,
+            )
+            return {'teaser_text': output_text.strip(), 'input_tokens': input_tokens, 'output_tokens': output_tokens, 'cost_usd': cost, 'model': self.preview_model, **timing}
         except Exception as e:
+            log_event(
+                logger,
+                logging.ERROR,
+                "bedrock preview generation failed",
+                event="bedrock_generation_failed",
+                exc_info=e,
+                model_id=self.preview_model,
+                operation="generate_preview_teaser",
+            )
             raise RuntimeError(f"Bedrock preview generation failed: {str(e)}")
 
     def generate_full_reading(self, question: str, astrology_facts: Dict[str, Any], tarot_cards: List[Dict[str, str]], palm_facts: Optional[List[Dict[str, str]]] = None, style: str = "grounded", flow_type: str = "combined", include_palm: bool = True) -> Dict[str, Any]:
@@ -531,6 +590,7 @@ Tarot Cards:
 
 Generate the full reading following this flow schema and the grounding rules."""
         system, messages = self._build_messages(system_prompt, user_content)
+        started = time.perf_counter()
         try:
             response = self.client.converse(modelId=self.full_model, messages=messages, system=[{"text": system}], inferenceConfig={"maxTokens": self.full_max_tokens, "temperature": 0.78, "topP": 0.92})
             output_text = response['output']['message']['content'][0]['text']
@@ -539,8 +599,26 @@ Generate the full reading following this flow schema and the grounding rules."""
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
             cost = self._calculate_cost(self.full_model, input_tokens, output_tokens)
-            return {'sections': sections, 'full_text': output_text, 'input_tokens': input_tokens, 'output_tokens': output_tokens, 'cost_usd': cost, 'model': self.full_model}
+            timing = self._log_llm_call_completed(
+                operation="generate_full_reading",
+                model_id=self.full_model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost,
+                started=started,
+                response=response,
+            )
+            return {'sections': sections, 'full_text': output_text, 'input_tokens': input_tokens, 'output_tokens': output_tokens, 'cost_usd': cost, 'model': self.full_model, **timing}
         except Exception as e:
+            log_event(
+                logger,
+                logging.ERROR,
+                "bedrock full reading generation failed",
+                event="bedrock_generation_failed",
+                exc_info=e,
+                model_id=self.full_model,
+                operation="generate_full_reading",
+            )
             raise RuntimeError(f"Bedrock full reading generation failed: {str(e)}")
 
     def generate_lunar_forecast(self, question: str, zodiac: Dict[str, str], year_label: str, year_zodiac: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
@@ -585,6 +663,7 @@ Lunar context: {json.dumps(lunar_context, separators=(',', ':'))}
 
 Focus on themes, growth areas, energies to work with, and challenges to navigate."""
         system, messages = self._build_messages(system_prompt, user_content)
+        started = time.perf_counter()
         try:
             response = self.client.converse(modelId=self.full_model, messages=messages, system=[{"text": system}], inferenceConfig={"maxTokens": 450, "temperature": 0.76, "topP": 0.92})
             output_text = response['output']['message']['content'][0]['text']
@@ -592,8 +671,26 @@ Focus on themes, growth areas, energies to work with, and challenges to navigate
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
             cost = self._calculate_cost(self.full_model, input_tokens, output_tokens)
-            return {"text": output_text.strip(), "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost, "model": self.full_model}
+            timing = self._log_llm_call_completed(
+                operation="generate_lunar_forecast",
+                model_id=self.full_model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost,
+                started=started,
+                response=response,
+            )
+            return {"text": output_text.strip(), "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost, "model": self.full_model, **timing}
         except Exception as e:
+            log_event(
+                logger,
+                logging.ERROR,
+                "bedrock lunar forecast generation failed",
+                event="bedrock_generation_failed",
+                exc_info=e,
+                model_id=self.full_model,
+                operation="generate_lunar_forecast",
+            )
             raise RuntimeError(f"Bedrock lunar forecast generation failed: {str(e)}")
 
     def generate_compatibility_preview(self, person1: Dict[str, Any], person2: Dict[str, Any], synastry: Dict[str, Any], zodiac_compatibility: Dict[str, Any]) -> Dict[str, Any]:
@@ -621,6 +718,7 @@ Person 2: {json.dumps(person2, separators=(',', ':'))}
 Synastry: {json.dumps(synastry, separators=(',', ':'))}
 Chinese zodiac harmony: {json.dumps(zodiac_compatibility, separators=(',', ':'))}"""
         system, messages = self._build_messages(system_prompt, user_content)
+        started = time.perf_counter()
         try:
             response = self.client.converse(modelId=self.preview_model, messages=messages, system=[{"text": system}], inferenceConfig={"maxTokens": self.preview_max_tokens, "temperature": 0.7, "topP": 0.92})
             output_text = response['output']['message']['content'][0]['text']
@@ -628,8 +726,26 @@ Chinese zodiac harmony: {json.dumps(zodiac_compatibility, separators=(',', ':'))
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
             cost = self._calculate_cost(self.preview_model, input_tokens, output_tokens)
-            return {"teaser_text": output_text.strip(), "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost, "model": self.preview_model}
+            timing = self._log_llm_call_completed(
+                operation="generate_compatibility_preview",
+                model_id=self.preview_model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost,
+                started=started,
+                response=response,
+            )
+            return {"teaser_text": output_text.strip(), "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost, "model": self.preview_model, **timing}
         except Exception as e:
+            log_event(
+                logger,
+                logging.ERROR,
+                "bedrock compatibility preview generation failed",
+                event="bedrock_generation_failed",
+                exc_info=e,
+                model_id=self.preview_model,
+                operation="generate_compatibility_preview",
+            )
             raise RuntimeError(f"Bedrock compatibility preview failed: {str(e)}")
 
     def generate_compatibility_reading(self, person1: Dict[str, Any], person2: Dict[str, Any], synastry: Dict[str, Any], zodiac_compatibility: Dict[str, Any]) -> Dict[str, Any]:
@@ -687,6 +803,7 @@ Person 2: {json.dumps(person2, separators=(',', ':'))}
 Synastry: {json.dumps(synastry, separators=(',', ':'))}
 Chinese zodiac harmony: {json.dumps(zodiac_compatibility, separators=(',', ':'))}"""
         system, messages = self._build_messages(system_prompt, user_content)
+        started = time.perf_counter()
         try:
             response = self.client.converse(modelId=self.full_model, messages=messages, system=[{"text": system}], inferenceConfig={"maxTokens": self.full_max_tokens, "temperature": 0.78, "topP": 0.92})
             output_text = response['output']['message']['content'][0]['text']
@@ -695,8 +812,26 @@ Chinese zodiac harmony: {json.dumps(zodiac_compatibility, separators=(',', ':'))
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
             cost = self._calculate_cost(self.full_model, input_tokens, output_tokens)
-            return {"sections": sections, "full_text": output_text, "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost, "model": self.full_model}
+            timing = self._log_llm_call_completed(
+                operation="generate_compatibility_reading",
+                model_id=self.full_model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost,
+                started=started,
+                response=response,
+            )
+            return {"sections": sections, "full_text": output_text, "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost, "model": self.full_model, **timing}
         except Exception as e:
+            log_event(
+                logger,
+                logging.ERROR,
+                "bedrock compatibility reading generation failed",
+                event="bedrock_generation_failed",
+                exc_info=e,
+                model_id=self.full_model,
+                operation="generate_compatibility_reading",
+            )
             raise RuntimeError(f"Bedrock compatibility reading failed: {str(e)}")
 
     def generate_blessing(self, question: str, themes: List[str]) -> Dict[str, Any]:
@@ -717,6 +852,7 @@ TONE: Warm, grounded, hopeful, with personality.
 Question/intention: \"{question}\"
 Themes: {json.dumps(themes, separators=(',', ':'))}"""
         system, messages = self._build_messages(system_prompt, user_content)
+        started = time.perf_counter()
         try:
             response = self.client.converse(modelId=self.preview_model, messages=messages, system=[{"text": system}], inferenceConfig={"maxTokens": 180, "temperature": 0.7, "topP": 0.9})
             output_text = response['output']['message']['content'][0]['text']
@@ -724,8 +860,26 @@ Themes: {json.dumps(themes, separators=(',', ':'))}"""
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
             cost = self._calculate_cost(self.preview_model, input_tokens, output_tokens)
-            return {"blessing_text": output_text.strip(), "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost, "model": self.preview_model}
+            timing = self._log_llm_call_completed(
+                operation="generate_blessing",
+                model_id=self.preview_model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost,
+                started=started,
+                response=response,
+            )
+            return {"blessing_text": output_text.strip(), "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost, "model": self.preview_model, **timing}
         except Exception as e:
+            log_event(
+                logger,
+                logging.ERROR,
+                "bedrock blessing generation failed",
+                event="bedrock_generation_failed",
+                exc_info=e,
+                model_id=self.preview_model,
+                operation="generate_blessing",
+            )
             raise RuntimeError(f"Bedrock blessing failed: {str(e)}")
 
     def generate_feng_shui_analysis(self, context: Dict[str, Any], vision_analysis: Dict[str, Any]) -> Dict[str, Any]:
@@ -773,6 +927,7 @@ OUTPUT FORMAT:
 Vision analysis (JSON):
 {json.dumps(vision_analysis, separators=(',', ':'))}"""
         system, messages = self._build_messages(system_prompt, user_content)
+        started = time.perf_counter()
         try:
             response = self.client.converse(modelId=self.full_model, messages=messages, system=[{"text": system}], inferenceConfig={"maxTokens": self.full_max_tokens, "temperature": 0.65, "topP": 0.9})
             output_text = response['output']['message']['content'][0]['text']
@@ -781,8 +936,26 @@ Vision analysis (JSON):
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)
             cost = self._calculate_cost(self.full_model, input_tokens, output_tokens)
-            return {"sections": sections, "full_text": output_text, "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost, "model": self.full_model}
+            timing = self._log_llm_call_completed(
+                operation="generate_feng_shui_analysis",
+                model_id=self.full_model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost,
+                started=started,
+                response=response,
+            )
+            return {"sections": sections, "full_text": output_text, "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_usd": cost, "model": self.full_model, **timing}
         except Exception as e:
+            log_event(
+                logger,
+                logging.ERROR,
+                "bedrock feng shui analysis failed",
+                event="bedrock_generation_failed",
+                exc_info=e,
+                model_id=self.full_model,
+                operation="generate_feng_shui_analysis",
+            )
             raise RuntimeError(f"Bedrock feng shui analysis failed: {str(e)}")
 
     def _parse_sections(self, text: str) -> List[Dict[str, str]]:

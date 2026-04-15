@@ -1,3 +1,6 @@
+import time
+
+import bedrock_service
 from bedrock_service import BedrockService
 
 
@@ -121,3 +124,40 @@ def test_calculate_cost_uses_per_model_rates() -> None:
     assert lite_cost == 0.0003
     assert pro_cost == 0.004
     assert unknown == 0.0
+
+
+def test_log_llm_call_completed_emits_structured_usage_event(monkeypatch) -> None:
+    service = _service_without_client()
+    captured: list[dict] = []
+
+    def _fake_log_event(_logger, _level, _message, **kwargs) -> None:
+        captured.append(kwargs)
+
+    monkeypatch.setattr(bedrock_service, "log_event", _fake_log_event)
+
+    started = time.perf_counter()
+    timing = service._log_llm_call_completed(
+        operation="generate_preview_teaser",
+        model_id="us.amazon.nova-lite-v1:0",
+        input_tokens=120,
+        output_tokens=80,
+        cost_usd=0.012345,
+        started=started,
+        response={"metrics": {"latencyMs": 42}},
+    )
+
+    assert timing["model_duration_ms"] == 42.0
+    assert timing["duration_ms"] >= 0
+    assert captured == [
+        {
+            "event": "llm_call_completed",
+            "provider": "bedrock",
+            "operation": "generate_preview_teaser",
+            "model_id": "us.amazon.nova-lite-v1:0",
+            "input_tokens": 120,
+            "output_tokens": 80,
+            "total_tokens": 200,
+            "cost_usd": 0.012345,
+            **timing,
+        }
+    ]

@@ -51,6 +51,10 @@ logs/
 
 # Docker
 docker-compose.override.yml
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
 
 # OS
 Thumbs.db

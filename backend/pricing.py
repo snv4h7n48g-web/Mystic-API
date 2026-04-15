@@ -31,6 +31,7 @@ class ProductSKU:
 
     # Seasonal add-ons
     LUNAR_FORECAST = "lunar_forecast_100"
+    DARUMA_BLESSING = "daruma_blessing_199"
 
     # Compatibility
     COMPATIBILITY = "compatibility_399"
@@ -122,6 +123,16 @@ PRODUCTS = {
         "is_addon": True,
         "seasonal_start": "01-20",
         "seasonal_end": "02-28"
+    },
+    ProductSKU.DARUMA_BLESSING: {
+        "id": ProductSKU.DARUMA_BLESSING,
+        "name": "Daruma Blessing Ritual",
+        "tier": None,
+        "price_usd": 1.99,
+        "price_after_apple_cut": 1.39,
+        "features": ["daruma_blessing"],
+        "description": "Daruma doll blessing ritual with preview and full unlock",
+        "is_addon": True,
     },
     ProductSKU.COMPATIBILITY: {
         "id": ProductSKU.COMPATIBILITY,

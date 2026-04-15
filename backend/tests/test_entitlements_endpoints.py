@@ -235,3 +235,55 @@ def test_feng_shui_purchase_short_circuits_when_bundle_entitled(monkeypatch) -> 
     assert payload["status"] == "included_by_entitlement"
     assert payload["product_id"] == ProductSKU.FENG_SHUI_SINGLE
     assert payload["bundle_active"] is True
+
+
+def test_activate_subscription_records_android_verification(monkeypatch) -> None:
+    user = _auth_user()
+    captured = {}
+
+    class _Verification:
+        provider = "google_play"
+        environment = "sandbox"
+        entitlement_active = True
+        original_transaction_id = "linked-sub-token-1"
+        transaction_id = "GPA.sub-order-1"
+        detail = "Google Play subscription purchase verified."
+        raw = {"latestOrderId": "GPA.sub-order-1"}
+
+    class _UserService:
+        def set_subscription(self, user_id: str, subscription: dict) -> None:
+            captured["set_subscription"] = {
+                "user_id": user_id,
+                "subscription": subscription,
+            }
+
+    monkeypatch.setattr(main, "_verify_purchase_or_raise", lambda **kwargs: _Verification())
+    monkeypatch.setattr(main, "get_user_service", lambda: _UserService())
+    monkeypatch.setattr(main, "db_record_purchase_transaction", lambda **kwargs: captured.update(recorded=kwargs))
+
+    main.app.dependency_overrides[main.get_current_user] = lambda: user
+    client = TestClient(main.app)
+    try:
+        response = client.post(
+            "/v1/subscription/activate",
+            json={
+                "product_id": ProductSKU.DAILY_ASTRO_TAROT,
+                "transaction_id": "client-sub-1",
+                "receipt_data": "subscription_purchase_token_1",
+                "platform": "android",
+            },
+        )
+    finally:
+        main.app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "active"
+    assert payload["subscription"]["transaction_id"] == "GPA.sub-order-1"
+    assert payload["subscription"]["original_transaction_id"] == "linked-sub-token-1"
+    assert payload["subscription"]["verification_provider"] == "google_play"
+    assert payload["subscription"]["verification_environment"] == "sandbox"
+    assert captured["set_subscription"]["user_id"] == user["id"]
+    assert captured["recorded"]["platform"] == "android"
+    assert captured["recorded"]["provider"] == "google_play"
+    assert captured["recorded"]["resource_type"] == "subscription"

@@ -1,0 +1,22 @@
+environment         = "staging"
+aws_region          = "us-east-1"
+container_image     = "123456789012.dkr.ecr.us-east-1.amazonaws.com/mystic-api:staging"
+availability_zones  = ["us-east-1a", "us-east-1b"]
+public_subnet_cidrs = ["10.40.0.0/24", "10.40.1.0/24"]
+private_app_subnet_cidrs = ["10.40.10.0/24", "10.40.11.0/24"]
+private_db_subnet_cidrs  = ["10.40.20.0/24", "10.40.21.0/24"]
+
+db_password_secret_arn                = "arn:aws:secretsmanager:us-east-1:123456789012:secret:mystic/staging/db-password"
+jwt_secret_arn                        = "arn:aws:secretsmanager:us-east-1:123456789012:secret:mystic/staging/jwt"
+google_service_account_json_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:mystic/staging/google-play"
+
+cors_allowed_origins   = "https://staging.mystic.example"
+s3_bucket_name         = "mystic-staging-uploads"
+google_play_package_name = "com.example.mystic"
+
+desired_count   = 1
+db_multi_az     = false
+ecs_min_capacity = 1
+ecs_max_capacity = 2
+alarm_email_endpoints = ["alerts@example.com"]
+llm_cost_alarm_threshold_usd = 25

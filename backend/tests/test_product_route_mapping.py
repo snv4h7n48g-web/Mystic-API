@@ -21,6 +21,7 @@ def test_lunar_flow_uses_lunar_context_without_requiring_birth_date() -> None:
 
 def test_tarot_flow_uses_tarot_only() -> None:
     assert main._flow_uses_astrology("tarot_solo") is False
+    assert main._flow_requires_birth_date("tarot_solo") is False
     assert main._flow_uses_tarot("tarot_solo") is True
 
 
@@ -82,4 +83,33 @@ def test_combined_complete_flow_keeps_palm_but_not_lunar_without_addon() -> None
         "flow_type": "combined",
         "include_palm": True,
         "include_lunar_forecast": False,
+    }
+
+
+def test_blessing_flow_maps_to_daruma_unlock_product() -> None:
+    session = {
+        "inputs": {"flow_type": "blessing_solo"},
+        "purchased_products": [],
+        "palm_analysis": None,
+    }
+
+    assert main._required_session_product_id(session) == ProductSKU.DARUMA_BLESSING
+    assert main._session_content_contract(session) == {
+        "flow_type": "blessing_solo",
+        "include_palm": False,
+        "include_lunar_forecast": False,
+    }
+
+
+def test_blessing_flow_preview_contract_unlocks_after_purchase() -> None:
+    session = {
+        "inputs": {"flow_type": "blessing_solo"},
+        "purchased_products": [ProductSKU.DARUMA_BLESSING],
+    }
+
+    assert main._session_preview_unlock_contract(session, user=None) == {
+        "unlock_amount": 0.0,
+        "product_id": ProductSKU.DARUMA_BLESSING,
+        "subscription_active": False,
+        "session_unlocked": True,
     }
