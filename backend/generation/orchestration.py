@@ -16,6 +16,8 @@ from .product_contracts import get_product_contract
 from .product_routing import get_product_route_for_context
 from .products.daily_horoscope.continuity import filter_daily_continuity
 from .products.daily_horoscope.reading import build_daily_horoscope_reading_payload
+from .products.feng_shui.preview import build_feng_shui_preview_payload
+from .products.feng_shui.reading import build_feng_shui_analysis_payload
 from .products.full_reading.formatter import build_full_reading_payload
 from .products.lunar.continuity import filter_lunar_continuity
 from .products.lunar.preview import build_lunar_preview_payload
@@ -360,31 +362,21 @@ class MysticGenerationOrchestrator:
             payload["metadata"].update({"flow_type": "compatibility"})
             return payload
         if context.object_type == "feng_shui" and context.surface == "preview":
-            return {
-                "teaser_text": " ".join(part.strip() for part in [normalized.opening_hook, normalized.current_pattern, normalized.premium_teaser] if part and part.strip()),
-                "analysis_type": (analysis or {}).get("analysis_type") or "single_room",
-                "unlock_price": {"currency": "USD", "amount": 0.0 if (entitlements or {}).get("included") else 0.0},
-                "product_id": product_id or "",
-                "entitlements": entitlements or {},
-                "meta": {
-                    "persona_id": metadata.persona_id,
-                    "llm_profile_id": metadata.llm_profile_id,
-                    "prompt_version": metadata.prompt_version,
-                    "theme_tags": metadata.theme_tags,
-                    "headline": metadata.headline,
-                },
-                "sections": [
-                    {"id": "opening_hook", "text": normalized.opening_hook},
-                    {"id": "current_pattern", "text": normalized.current_pattern},
-                    {"id": "emotional_truth", "text": normalized.emotional_truth},
-                    {"id": "practical_guidance", "text": normalized.practical_guidance},
-                    {"id": "next_return_invitation", "text": normalized.next_return_invitation},
-                ],
-            }
+            return build_feng_shui_preview_payload(
+                normalized=normalized,
+                metadata=metadata,
+                analysis=analysis or {},
+                product_id=product_id or "",
+                entitlements=entitlements or {},
+                price_amount=price_amount,
+            )
         if context.object_type == "feng_shui" and context.surface == "full":
-            payload = build_reading_payload(normalized=normalized, metadata=metadata)
-            payload["metadata"].update({"flow_type": "feng_shui"})
-            return payload
+            return build_feng_shui_analysis_payload(
+                normalized=normalized,
+                metadata=metadata,
+                analysis=analysis or {},
+                vision_result=(content_contract or {}).get("vision_result") or {},
+            )
         return build_reading_payload(normalized=normalized, metadata=metadata)
 
     def _generate_with_quality_gate(self, *, context: GenerationContext, persona_id: str, flow_id: str, continuity_context: dict | None, domain_context: dict, contract_instruction: str | None = None, payload_builder_kwargs: dict | None = None) -> OrchestrationResult:
@@ -676,6 +668,7 @@ class MysticGenerationOrchestrator:
                 "analysis": analysis,
                 "entitlements": entitlements,
                 "product_id": product_id,
+                "price_amount": price_amount,
             },
         )
 
@@ -697,6 +690,10 @@ class MysticGenerationOrchestrator:
                 "vision_analysis": vision_result,
             },
             contract_instruction=(contract.contract_instruction if contract else None),
+            payload_builder_kwargs={
+                "analysis": analysis,
+                "content_contract": {"vision_result": vision_result},
+            },
         )
         result.metadata.continuity_source_session_id = context.session_id
         return result

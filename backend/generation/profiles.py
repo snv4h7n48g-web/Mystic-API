@@ -50,10 +50,10 @@ LLM_PROFILES: dict[str, LlmProfile] = {
     "grounded_clarity": LlmProfile(
         id="grounded_clarity",
         model_id=_env("MYSTIC_LLM_PROFILE_GROUNDED_MODEL", DEFAULT_CLAUDE_OPUS),
-        temperature=0.6,
+        temperature=0.68,
         top_p=0.85,
-        max_tokens=900,
-        timeout_ms=22_000,
+        max_tokens=1200,
+        timeout_ms=35_000,
     ),
 }
 

@@ -117,8 +117,8 @@ PRODUCT_ROUTES: dict[str, ProductRoute] = {
         preview_model_id=_env("MYSTIC_ROUTE_FENG_SHUI_PREVIEW_MODEL", DEFAULT_NOVA_PREVIEW_MODEL),
         full_model_id=_env("MYSTIC_ROUTE_FENG_SHUI_FULL_MODEL", DEFAULT_ANTHROPIC_TEXT_MODEL),
         fallback_model_id=_env("MYSTIC_ROUTE_FENG_SHUI_FALLBACK_MODEL", DEFAULT_FENG_SHUI_VISION_MODEL),
-        preview_max_tokens=700,
-        full_max_tokens=1400,
+        preview_max_tokens=1000,
+        full_max_tokens=2400,
         persona_hint="practical_astrologer",
     ),
 }

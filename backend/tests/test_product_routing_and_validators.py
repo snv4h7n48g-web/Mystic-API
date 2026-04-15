@@ -23,6 +23,13 @@ def test_lunar_route_has_explicit_yearkeeper_persona_hint() -> None:
     assert route.persona_hint == "yearkeeper"
 
 
+def test_feng_shui_route_has_premium_headroom_for_full_analysis() -> None:
+    route = get_product_route(flow_type="feng_shui", surface="reading", object_type="feng_shui")
+    assert route.product_key == "feng_shui"
+    assert route.preview_max_tokens >= 1000
+    assert route.full_max_tokens >= 2400
+
+
 def test_lunar_validator_flags_daily_drift_and_duplicates() -> None:
     payload = {
         "sections": [
