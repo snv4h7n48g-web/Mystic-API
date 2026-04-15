@@ -64,7 +64,7 @@ PRODUCT_ROUTES: dict[str, ProductRoute] = {
         fallback_model_id=_env("MYSTIC_ROUTE_LUNAR_FALLBACK_MODEL", DEFAULT_NOVA_FULL_MODEL),
         preview_max_tokens=900,
         full_max_tokens=1800,
-        persona_hint="year_ahead",
+        persona_hint="yearkeeper",
     ),
     "tarot": ProductRoute(
         product_key="tarot",

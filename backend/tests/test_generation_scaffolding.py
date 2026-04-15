@@ -16,7 +16,7 @@ def test_compose_generation_prompt_includes_persona_flow_and_schema() -> None:
     )
 
     assert "system_prompt" in prompt
-    assert prompt["prompt_version"] == "mystic-v2"
+    assert prompt["prompt_version"] == "mystic-v3"
     assert any("PERSONA:" in message for message in prompt["messages"])
     assert any("FLOW:" in message for message in prompt["messages"])
     assert any("Return JSON" in message for message in prompt["messages"])
@@ -157,6 +157,19 @@ def test_choose_persona_keeps_daily_on_refined_psychic_best_friend() -> None:
     )
 
     assert persona == "psychic_best_friend"
+
+
+def test_choose_persona_routes_lunar_to_yearkeeper() -> None:
+    persona = choose_persona(
+        GenerationContext(
+            object_id="l1",
+            object_type="session",
+            flow_type="lunar_new_year_solo",
+            surface="reading",
+        )
+    )
+
+    assert persona == "yearkeeper"
 
 
 def test_invoke_text_uses_bedrock_converse_and_returns_usage(monkeypatch) -> None:

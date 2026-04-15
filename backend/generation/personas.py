@@ -59,12 +59,22 @@ PERSONAS: dict[str, PersonaConfig] = {
     "practical_astrologer": PersonaConfig(
         id="practical_astrologer",
         display_name="Practical Astrologer",
-        eligible_flows=("sun_moon_solo", "lunar_new_year_solo", "daily_horoscope", "account", "grounded", "feng_shui"),
+        eligible_flows=("sun_moon_solo", "daily_horoscope", "account", "grounded", "feng_shui"),
         default_profile="grounded_clarity",
         mysticism_level="low",
         tone_tags=("calm", "structured", "credible", "practical"),
         conversion_style="clarity_expansion",
         safety_rules=("no_false_certainty", "no_fabricated_memory", "no_manipulative_urgency"),
+    ),
+    "yearkeeper": PersonaConfig(
+        id="yearkeeper",
+        display_name="Yearkeeper",
+        eligible_flows=("lunar_new_year_solo",),
+        default_profile="full_premium",
+        mysticism_level="medium",
+        tone_tags=("ceremonial", "elegant", "seasonal", "grounded", "premium"),
+        conversion_style="cycle_threshold_guidance",
+        safety_rules=("no_false_certainty", "no_fabricated_memory", "no_manipulative_urgency", "no_cultural_caricature"),
     ),
 }
 

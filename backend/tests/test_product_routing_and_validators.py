@@ -17,6 +17,12 @@ def test_full_reading_route_has_explicit_flagship_persona_hint() -> None:
     assert route.persona_hint == "flagship_mystic"
 
 
+def test_lunar_route_has_explicit_yearkeeper_persona_hint() -> None:
+    route = get_product_route(flow_type="lunar_new_year_solo", surface="reading")
+    assert route.product_key == "lunar"
+    assert route.persona_hint == "yearkeeper"
+
+
 def test_lunar_validator_flags_daily_drift_and_duplicates() -> None:
     payload = {
         "sections": [

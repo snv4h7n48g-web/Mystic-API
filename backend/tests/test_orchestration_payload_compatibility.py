@@ -90,3 +90,19 @@ def test_combined_full_payload_uses_two_part_payoff_contract() -> None:
     assert "your_next_move" in sections
     assert "practical_guidance" not in sections
     assert payload["metadata"]["payoff_contract"]["your_next_move"]
+
+
+def test_lunar_domain_context_uses_guest_lunar_birth_year_when_birth_date_missing() -> None:
+    orchestrator = MysticGenerationOrchestrator()
+
+    context = orchestrator._build_lunar_domain_context(
+        session={
+            "inputs": {
+                "flow_type": "lunar_new_year_solo",
+                "lunar_birth_year": 1990,
+            }
+        }
+    )
+
+    assert context["birth_zodiac"]["animal"] == "Horse"
+    assert context["birth_zodiac"]["combined"]

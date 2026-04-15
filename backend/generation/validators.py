@@ -68,7 +68,7 @@ VALIDATORS = {
 
 RETRY_HINTS = {
     "daily": "Correct the output into a true daily horoscope about today only. Use a recognisable daily structure and remove any year-ahead or Lunar framing.",
-    "lunar": "Correct the output into a Lunar New Year year-ahead reading. Remove today-style wording, avoid duplicate sections, and keep the year-cycle frame explicit.",
+    "lunar": "Correct the output into a Lunar New Year year-ahead reading. Remove today-style wording, avoid duplicate sections, and keep the year-cycle frame explicit. Make the current lunar year animal and element matter. If lunar_context is present, make the user's birth zodiac and its relationship to the current year visibly shape the reading. Ensure cycle theme, year symbolism, welcome/release, and movement guidance are all distinct and materially developed.",
     "tarot": "Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
     "compatibility": "Correct the output into a two-person compatibility reading. Make the relationship dynamics, strengths, tensions, and grounded guidance explicit.",
     "palm": "Correct the output into a palm-feature-led reading. Refer to palm lines, mounts, hand shape, or observed features; interpret what each visible signal suggests; and avoid generic divination prose or raw OCR-style description.",

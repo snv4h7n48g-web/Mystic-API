@@ -10,8 +10,13 @@ from pricing import ProductSKU
 
 def test_daily_horoscope_flow_uses_astrology_only() -> None:
     assert main._flow_uses_astrology("daily_horoscope") is True
+    assert main._flow_requires_birth_date("daily_horoscope") is True
     assert main._flow_uses_tarot("daily_horoscope") is False
 
+
+def test_lunar_flow_uses_lunar_context_without_requiring_birth_date() -> None:
+    assert main._flow_uses_astrology("lunar_new_year_solo") is True
+    assert main._flow_requires_birth_date("lunar_new_year_solo") is False
 
 
 def test_tarot_flow_uses_tarot_only() -> None:

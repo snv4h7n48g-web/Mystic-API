@@ -9,6 +9,7 @@ import os
 import time
 from botocore.config import Config
 from typing import Dict, Any, List, Optional
+from lunar_knowledge import build_lunar_prompt_context
 from reference_knowledge import ASTROLOGY_REFERENCE, TAROT_REFERENCE, PALMISTRY_REFERENCE, VOICE_LIBRARY
 from tarot_knowledge import build_tarot_draw_prompt_context
 
@@ -542,8 +543,22 @@ Generate the full reading following this flow schema and the grounding rules."""
         except Exception as e:
             raise RuntimeError(f"Bedrock full reading generation failed: {str(e)}")
 
-    def generate_lunar_forecast(self, question: str, zodiac: Dict[str, str], year_label: str) -> Dict[str, Any]:
+    def generate_lunar_forecast(self, question: str, zodiac: Dict[str, str], year_label: str, year_zodiac: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         reference_block = self._build_reference_block()
+        current_year = None
+        try:
+            current_year = int((year_label or "").split(":", 1)[0].strip())
+        except (TypeError, ValueError):
+            current_year = None
+        lunar_context = (
+            build_lunar_prompt_context(
+                birth_zodiac=zodiac,
+                current_year=current_year,
+                current_year_zodiac=year_zodiac,
+            )
+            if current_year is not None
+            else {}
+        )
         system_prompt = f"""You are an insightful metaphysical reader writing a Lunar New Year forecast add-on.
 
 CRITICAL RULES:
@@ -551,6 +566,7 @@ CRITICAL RULES:
 - Grounded, opportunity-focused, with directional forecasting
 - Include at least one concrete \"expect / likely\" forward-looking line
 - Be specific to the user's zodiac animal + element
+- Use the lunar_context to ground the year animal, year element, and the relationship between the user's birth zodiac and the current year.
 - Keep one clear year theme and build around it
 - Avoid technical jargon and keep it human, direct, and relatable
 
@@ -565,6 +581,7 @@ TONE: Grounded, practical, bold, with gentle grit.
 User question/intention: \"{question}\"
 Chinese zodiac: {json.dumps(zodiac, separators=(',', ':'))}
 Year label: {year_label}
+Lunar context: {json.dumps(lunar_context, separators=(',', ':'))}
 
 Focus on themes, growth areas, energies to work with, and challenges to navigate."""
         system, messages = self._build_messages(system_prompt, user_content)

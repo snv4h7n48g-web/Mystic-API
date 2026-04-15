@@ -231,6 +231,7 @@ class SessionCreate(BaseModel):
 
 class SessionUpdate(BaseModel):
     birth_date: Optional[str] = None
+    lunar_birth_year: Optional[int] = None
     birth_time: Optional[str] = None
     birth_time_unknown: Optional[bool] = None
     birth_location_text: Optional[str] = None
@@ -1043,6 +1044,14 @@ def _flow_uses_astrology(flow_type: str) -> bool:
     }
 
 
+def _flow_requires_birth_date(flow_type: str) -> bool:
+    return flow_type in {
+        "combined",
+        "sun_moon_solo",
+        "daily_horoscope",
+    }
+
+
 def _flow_uses_tarot(flow_type: str) -> bool:
     return flow_type in {"combined", "tarot_solo"}
 
@@ -1525,7 +1534,7 @@ def generate_preview(
     flow_type = _flow_type(inputs)
     if not inputs.get("question_intention"):
         raise HTTPException(400, "Missing required input: question_intention")
-    if _flow_uses_astrology(flow_type) and not inputs.get("birth_date"):
+    if _flow_requires_birth_date(flow_type) and not inputs.get("birth_date"):
         raise HTTPException(400, "Missing required input: birth_date")
 
     # If preview already exists, return it (no new LLM call).
@@ -1633,7 +1642,7 @@ def generate_preview(
         lat, lon = geo_service.geocode_with_fallback(location_text)
 
         astrology_facts: Dict[str, Any] = {}
-        if _flow_uses_astrology(flow_type):
+        if _flow_uses_astrology(flow_type) and inputs.get("birth_date"):
             astrology_facts = astro_engine.generate_chart(
                 birth_date=inputs["birth_date"],
                 birth_time=inputs.get("birth_time"),
@@ -2105,7 +2114,7 @@ def _build_session_reading_response(
         )
         if lunar_included:
             try:
-                birth_year = int((inputs.get("birth_date") or "").split("-")[0])
+                birth_year = int(inputs.get("lunar_birth_year") or (inputs.get("birth_date") or "").split("-")[0])
             except Exception:
                 birth_year = None
 
@@ -2119,6 +2128,7 @@ def _build_session_reading_response(
                     question=question,
                     zodiac=user_zodiac,
                     year_label=year_label,
+                    year_zodiac=year_zodiac,
                 )
 
                 reading["sections"].append({
@@ -3211,8 +3221,17 @@ def record_purchase(
             "subscription_active": True,
         }
     
-    # Validate purchase is allowed
-    if not validate_purchase(payload.product_id, purchased):
+    contract_matched_session_unlock = (
+        required_product_id is not None
+        and payload.product_id == required_product_id
+        and preview_unlock_amount is not None
+        and preview_unlock_amount > 0
+    )
+
+    # Validate purchase is allowed. When a concrete paid preview contract is
+    # already on the session, honor that contract even if the global catalog is
+    # currently outside a seasonal sales window.
+    if not contract_matched_session_unlock and not validate_purchase(payload.product_id, purchased):
         raise HTTPException(400, "Purchase not valid (already owned or missing prerequisite)")
     
     verification = _verify_purchase_or_raise(

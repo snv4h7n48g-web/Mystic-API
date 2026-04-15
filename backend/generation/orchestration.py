@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 from bedrock_service import get_bedrock_service
+from lunar_knowledge import build_lunar_prompt_context
 
 from .continuity.builder import build_continuity_context
 from .formatting.preview_formatter import build_preview_payload
@@ -17,6 +18,7 @@ from .products.daily_horoscope.continuity import filter_daily_continuity
 from .products.daily_horoscope.reading import build_daily_horoscope_reading_payload
 from .products.full_reading.formatter import build_full_reading_payload
 from .products.lunar.continuity import filter_lunar_continuity
+from .products.lunar.preview import build_lunar_preview_payload
 from .products.lunar.reading import build_lunar_reading_payload
 from .products.sun_moon.continuity import filter_sun_moon_continuity
 from .products.sun_moon.reading import build_sun_moon_reading_payload
@@ -34,6 +36,44 @@ logger = logging.getLogger("mystic.orchestration")
 
 class MysticGenerationOrchestrator:
     """Phase-3 product-aware orchestration with bounded validation retries."""
+
+    def _build_lunar_domain_context(self, *, session: dict) -> dict[str, Any]:
+        inputs = session.get("inputs") or {}
+        birth_date = (inputs.get("birth_date") or "").strip()
+        birth_year: int | None = None
+        lunar_birth_year = inputs.get("lunar_birth_year")
+        if isinstance(lunar_birth_year, int):
+            birth_year = lunar_birth_year
+        elif isinstance(lunar_birth_year, str) and lunar_birth_year.strip():
+            try:
+                birth_year = int(lunar_birth_year.strip())
+            except (TypeError, ValueError):
+                birth_year = None
+        if birth_year is None and birth_date:
+            try:
+                birth_year = int(birth_date.split("-", 1)[0])
+            except (TypeError, ValueError):
+                birth_year = None
+
+        astrology_engine = None
+        birth_zodiac = None
+        if birth_year:
+            from astrology_engine import get_astrology_engine
+
+            astrology_engine = get_astrology_engine()
+            birth_zodiac = astrology_engine.calculate_chinese_zodiac(birth_year)
+
+        current_year = time.gmtime().tm_year
+        current_year_zodiac = (
+            astrology_engine.calculate_chinese_zodiac(current_year)
+            if astrology_engine is not None
+            else None
+        )
+        return build_lunar_prompt_context(
+            birth_zodiac=birth_zodiac,
+            current_year=current_year,
+            current_year_zodiac=current_year_zodiac,
+        )
 
     def _summarize_generation_metrics(self, *, attempt_metrics: list[dict[str, Any]], total_duration_ms: float) -> dict[str, Any]:
         def _sum_metric(field_name: str) -> float:
@@ -241,6 +281,16 @@ class MysticGenerationOrchestrator:
 
     def _build_payload_for_context(self, *, context: GenerationContext, normalized: NormalizedMysticOutput, metadata: GenerationMetadata, unlock_price: dict | None = None, product_id: str | None = None, entitlements: dict | None = None, astrology_facts: dict | None = None, tarot_payload: dict | None = None, palm_features: list[dict] | None = None, include_palm: bool = False, deep_access: bool = False, content_contract: dict | None = None, person1: dict | None = None, person2: dict | None = None, chart1: dict | None = None, chart2: dict | None = None, zodiac1: dict | None = None, zodiac2: dict | None = None, synastry: dict | None = None, zodiac_harmony: dict | None = None, analysis: dict | None = None, price_amount: float = 0.0) -> dict:
         if context.object_type == "session" and context.surface == "preview":
+            if context.flow_type == "lunar_new_year_solo":
+                return build_lunar_preview_payload(
+                    normalized=normalized,
+                    metadata=metadata,
+                    unlock_price=unlock_price or {},
+                    product_id=product_id or "",
+                    entitlements=entitlements or {},
+                    astrology_facts=astrology_facts or {},
+                    lunar_context=(content_contract or {}).get("lunar_context"),
+                )
             return build_preview_payload(
                 normalized=normalized,
                 metadata=metadata,
@@ -255,7 +305,7 @@ class MysticGenerationOrchestrator:
             payload = (
                 build_daily_horoscope_reading_payload(normalized=normalized, metadata=metadata)
                 if context.flow_type == "daily_horoscope"
-                else build_lunar_reading_payload(normalized=normalized, metadata=metadata)
+                else build_lunar_reading_payload(normalized=normalized, metadata=metadata, lunar_context=(content_contract or {}).get("lunar_context"))
                 if context.flow_type == "lunar_new_year_solo"
                 else build_tarot_reading_payload(normalized=normalized, metadata=metadata)
                 if context.flow_type == "tarot_solo"
@@ -472,6 +522,7 @@ class MysticGenerationOrchestrator:
 
     def build_session_preview_result(self, *, session: dict, user: dict | None, astrology_facts: dict, tarot_payload: dict, unlock_price: dict, product_id: str, entitlements: dict) -> OrchestrationResult:
         context = self._build_session_context(session=session, user=user, surface="preview", unlocked=bool(entitlements.get("subscription_active")))
+        lunar_context = self._build_lunar_domain_context(session=session) if context.flow_type == "lunar_new_year_solo" else {}
         continuity_context = build_continuity_context(
             user_id=context.user_id,
             session_id=context.session_id,
@@ -491,6 +542,7 @@ class MysticGenerationOrchestrator:
                 "flow_type": context.flow_type,
                 "astrology_facts": astrology_facts,
                 "tarot": tarot_payload,
+                "lunar_context": lunar_context,
             },
             contract_instruction=(contract.contract_instruction if contract else None),
             payload_builder_kwargs={
@@ -499,11 +551,13 @@ class MysticGenerationOrchestrator:
                 "entitlements": entitlements,
                 "astrology_facts": astrology_facts,
                 "tarot_payload": tarot_payload,
+                "content_contract": {"lunar_context": lunar_context} if lunar_context else {},
             },
         )
 
     def build_session_reading_result(self, *, session: dict, user: dict | None, astrology_facts: dict, tarot_payload: dict, palm_features: list[dict] | None, include_palm: bool, deep_access: bool, content_contract: dict) -> OrchestrationResult:
         context = self._build_session_context(session=session, user=user, surface="full", unlocked=True)
+        lunar_context = self._build_lunar_domain_context(session=session) if context.flow_type == "lunar_new_year_solo" else {}
         continuity_context = build_continuity_context(
             user_id=context.user_id,
             session_id=context.session_id,
@@ -536,6 +590,7 @@ class MysticGenerationOrchestrator:
                 "include_palm": include_palm,
                 "deep_access": deep_access,
                 "content_contract": content_contract,
+                "lunar_context": lunar_context,
             },
             contract_instruction=(contract.contract_instruction if contract else None),
             payload_builder_kwargs={
@@ -543,7 +598,7 @@ class MysticGenerationOrchestrator:
                 "palm_features": palm_features or [],
                 "include_palm": include_palm,
                 "deep_access": deep_access,
-                "content_contract": content_contract,
+                "content_contract": ({**(content_contract or {}), "lunar_context": lunar_context} if lunar_context else content_contract),
             },
         )
         result.metadata.continuity_source_session_id = context.session_id
