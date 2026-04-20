@@ -13,6 +13,7 @@ Guidance payload rules:
 - For other flows, you may return:\n  \"practical_guidance\": string
 - You may include practical_guidance as a compatibility fallback, but full/core readings should prioritise the two explicit payoff keys.
 - For full/core session readings, also include these layered premium keys:\n  \"snapshot_core_theme\": string\n  \"snapshot_main_tension\": string\n  \"snapshot_best_next_move\": string\n  \"reading_opening\": string\n  \"astrological_foundation\": string\n  \"palm_revelation\": string\n  \"tarot_message\": string\n  \"signals_agree\": string
+- For full daily horoscope readings, also include:\n  \"daily_sections\": {\n    \"today_theme\": {\"headline\": string, \"detail\": string},\n    \"today_energy\": {\"headline\": string, \"detail\": string},\n    \"best_move\": {\"headline\": string, \"detail\": string},\n    \"watch_out_for\": {\"headline\": string, \"detail\": string},\n    \"people_energy\": {\"headline\": string, \"detail\": string},\n    \"work_focus\": {\"headline\": string, \"detail\": string},\n    \"timing\": {\"headline\": string, \"detail\": string},\n    \"closing_guidance\": {\"headline\": string, \"detail\": string}\n  }
 Field rules:
 - Each field must contain distinct content, not repeated or lightly reworded copies of another field.
 - opening_hook = opening frame only.
@@ -26,6 +27,7 @@ Field rules:
 - palm_revelation = what palm features/signals stood out, what they suggest, and how they apply to the question. If the palm contribution is subtle, say so honestly.
 - tarot_message = name the actual cards when available, explain what each contributes, how they interact as a spread, and how that speaks to the question. For full/core readings with tarot, this should usually be a substantial multi-paragraph block rather than a one-paragraph summary.
 - signals_agree = where the palm, tarot, and broader reading align or productively differ.
+- daily_sections = for full daily horoscope readings only. Each daily section must have a short headline and a fuller detail block that adds fresh material instead of restating the headline. Keep the timing immediate and concrete. People energy, work/focus, and timing should all be materially filled, not omitted or marked unavailable.
 - what_this_is_asking_of_you = the deeper invitation, demand, or inner adjustment this reading is pointing toward.
 - your_next_move = the clearest grounded action or decision to take next.
 - practical_guidance = concrete guidance only when a flow still uses a single guidance field.

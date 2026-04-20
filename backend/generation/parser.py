@@ -15,6 +15,45 @@ REQUIRED_KEYS = {
     "emotional_truth",
 }
 
+_DAILY_SECTION_IDS = {
+    "today_theme",
+    "today_energy",
+    "best_move",
+    "watch_out_for",
+    "people_energy",
+    "work_focus",
+    "timing",
+    "closing_guidance",
+}
+
+
+def _parse_daily_sections(value: object) -> dict[str, dict[str, str]]:
+    if value in (None, ""):
+        return {}
+    if not isinstance(value, dict):
+        raise GenerationParseError("daily_sections must be an object")
+
+    parsed: dict[str, dict[str, str]] = {}
+    for key, raw_block in value.items():
+        section_id = str(key)
+        if section_id not in _DAILY_SECTION_IDS:
+            continue
+        if raw_block in (None, ""):
+            continue
+        if not isinstance(raw_block, dict):
+            raise GenerationParseError(
+                f"daily_sections.{section_id} must be an object"
+            )
+        headline = str(raw_block.get("headline") or "")
+        detail = str(raw_block.get("detail") or "")
+        if not headline and not detail:
+            continue
+        parsed[section_id] = {
+            "headline": headline,
+            "detail": detail,
+        }
+    return parsed
+
 
 def parse_normalized_output(raw_text: str) -> NormalizedMysticOutput:
     try:
@@ -64,4 +103,5 @@ def parse_normalized_output(raw_text: str) -> NormalizedMysticOutput:
         palm_revelation=str(payload.get("palm_revelation") or ""),
         tarot_message=str(payload.get("tarot_message") or ""),
         signals_agree=str(payload.get("signals_agree") or ""),
+        daily_sections=_parse_daily_sections(payload.get("daily_sections")),
     )

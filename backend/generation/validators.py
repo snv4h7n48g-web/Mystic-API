@@ -18,6 +18,7 @@ class ValidationResult:
     passed: bool
     issues: list[str] = field(default_factory=list)
     retry_hint: str | None = None
+    hard_fail: bool = False
 
     @property
     def valid(self) -> bool:
@@ -67,7 +68,7 @@ VALIDATORS = {
 }
 
 RETRY_HINTS = {
-    "daily": "Correct the output into a true daily horoscope about today only. Use a recognisable daily structure and remove any year-ahead or Lunar framing.",
+    "daily": "Correct the output into a true daily horoscope about today only. Use a recognisable daily structure with all eight sections: today's theme, today's energy, best move, watch out for, people energy, work/focus, timing, and closing guidance. Fill the daily_sections object with distinct headline/detail pairs, keep timing immediate and concrete, remove year-ahead or Lunar framing, and stop repeating the same sentence or stem across sections.",
     "lunar": "Correct the output into a Lunar New Year year-ahead reading. Remove today-style wording, avoid duplicate sections, and keep the year-cycle frame explicit. Make the current lunar year animal and element matter. If lunar_context is present, make the user's birth zodiac and its relationship to the current year visibly shape the reading. Ensure cycle theme, year symbolism, welcome/release, and movement guidance are all distinct and materially developed.",
     "tarot": "Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
     "compatibility": "Correct the output into a two-person compatibility reading. Make the relationship dynamics, strengths, tensions, and grounded guidance explicit.",
@@ -82,9 +83,11 @@ def validate_product_payload(product_key: str, payload: dict) -> ValidationResul
     if validator is None:
         return ValidationResult(product_key=product_key, passed=True, issues=[])
     issues = validator(payload)
+    hard_fail_products = {"daily", "lunar", "tarot", "palm", "feng_shui", "full_reading"}
     return ValidationResult(
         product_key=product_key,
         passed=not issues,
         issues=issues,
         retry_hint=None if not issues else RETRY_HINTS.get(product_key),
+        hard_fail=bool(issues) and product_key in hard_fail_products,
     )

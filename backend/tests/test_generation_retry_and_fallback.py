@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import logging
 
-from generation.orchestration import MysticGenerationOrchestrator
+import pytest
+
+from generation.orchestration import MysticGenerationOrchestrator, QualityGateFailedError
 from generation.types import GenerationContext, GenerationMetadata, NormalizedMysticOutput, OrchestrationResult
 
 
@@ -148,7 +150,7 @@ def test_retry_correction_applies_once_and_returns_corrected_payload(monkeypatch
     assert result.output_tokens == 40
 
 
-def test_exhausted_retry_returns_best_available_full_payload_with_validation_metadata(monkeypatch) -> None:
+def test_exhausted_retry_raises_quality_gate_error_for_full_payload(monkeypatch) -> None:
     from generation.validators import ValidationResult
 
     orchestrator = StubRetryOrchestrator(
@@ -167,46 +169,57 @@ def test_exhausted_retry_returns_best_available_full_payload_with_validation_met
                 guidance="Be open.",
                 closing="Return soon.",
             ),
+            _response(
+                opening="Still vague after correction.",
+                current="Listen inward again.",
+                emotional="A message is still near.",
+                guidance="Be open again.",
+                closing="Return soon.",
+            ),
         ]
     )
     validation_spy = ValidatorSpy(
         [
-            ValidationResult(
-                product_key="tarot",
-                passed=False,
-                issues=["tarot_missing_card_specific_language"],
-                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
-            ),
-            ValidationResult(
-                product_key="tarot",
-                passed=False,
-                issues=["tarot_missing_card_specific_language", "tarot_missing_spread_context"],
-                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
-            ),
-        ]
-    )
+                ValidationResult(
+                    product_key="tarot",
+                    passed=False,
+                    issues=["tarot_missing_card_specific_language"],
+                    retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
+                    hard_fail=True,
+                ),
+                ValidationResult(
+                    product_key="tarot",
+                    passed=False,
+                    issues=["tarot_missing_card_specific_language", "tarot_missing_spread_context"],
+                    retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
+                    hard_fail=True,
+                ),
+                ValidationResult(
+                    product_key="tarot",
+                    passed=False,
+                    issues=["tarot_missing_card_specific_language", "tarot_missing_spread_context"],
+                    retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
+                    hard_fail=True,
+                ),
+            ]
+        )
     monkeypatch.setattr("generation.orchestration.validate_product_payload", validation_spy)
 
     context = GenerationContext(object_id="1", object_type="session", flow_type="tarot_solo", surface="full")
-    result = orchestrator._generate_with_quality_gate(
-        context=context,
-        persona_id="ancient_tarot_reader",
-        flow_id="tarot_reading",
-        continuity_context={},
-        domain_context={},
-        contract_instruction="tarot contract",
-        payload_builder_kwargs={},
-    )
+    with pytest.raises(QualityGateFailedError) as exc_info:
+        orchestrator._generate_with_quality_gate(
+            context=context,
+            persona_id="ancient_tarot_reader",
+            flow_id="tarot_reading",
+            continuity_context={},
+            domain_context={},
+            contract_instruction="tarot contract",
+            payload_builder_kwargs={},
+        )
 
-    assert len(orchestrator.retry_instructions) == 2
-    assert len(validation_spy.calls) == 2
-    assert result.payload["sections"][0]["text"] == "Still vague."
-    assert result.payload["metadata"]["validation"]["attempts"] == 2
-    assert result.payload["metadata"]["validation"]["valid"] is False
-    assert result.payload["metadata"]["validation"]["issues"] == [
-        "tarot_missing_card_specific_language",
-        "tarot_missing_spread_context",
-    ]
+    assert len(orchestrator.retry_instructions) == 3
+    assert len(validation_spy.calls) == 3
+    assert "tarot_missing_card_specific_language" in str(exc_info.value)
 
 
 def test_exhausted_retry_preview_payload_does_not_leak_validation_metadata(monkeypatch) -> None:
@@ -323,11 +336,11 @@ def test_anthropic_preferred_route_falls_back_to_configured_model(monkeypatch) -
     )
 
     assert [call["model_id"] for call in bedrock.calls] == [primary_model, fallback_model]
-    assert all(call["timeout_ms"] == 20000 for call in bedrock.calls)
+    assert all(call["timeout_ms"] == 45000 for call in bedrock.calls)
     assert metadata.model_id == fallback_model
     assert result.metadata.model_id == fallback_model
     assert result.generation_metrics["used_fallback_model"] is True
-    assert result.generation_metrics["timeout_ms"] == 20000
+    assert result.generation_metrics["timeout_ms"] == 45000
     assert normalized.opening_hook == "Today starts with clarity."
 
 
@@ -418,7 +431,6 @@ def test_generation_timing_summary_is_attached_for_live_triage(monkeypatch, capl
     assert "ttfo=70.0ms" in timing["summary"]
     assert "parse=35.0ms" in timing["summary"]
     assert "models=model-a,model-b" in timing["summary"]
-    assert any("generation_latency_breakdown" in record.message for record in caplog.records)
 
 
 

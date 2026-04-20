@@ -7,7 +7,9 @@ def test_daily_route_prefers_anthropic_text_lane_by_default() -> None:
     assert resolve_product_key(flow_type="daily_horoscope") == "daily"
     assert route.product_key == "daily"
     assert route.persona_hint == "psychic_best_friend"
-    assert "anthropic" in route.preview_model_id or route.preview_model_id == "us.amazon.nova-pro-v1:0"
+    assert route.preview_max_tokens >= 1000
+    assert route.full_max_tokens >= 2600
+    assert route.preview_model_id.startswith("us.amazon.nova")
     assert route.fallback_model_id.startswith("us.amazon.nova")
 
 
@@ -28,6 +30,11 @@ def test_feng_shui_route_has_premium_headroom_for_full_analysis() -> None:
     assert route.product_key == "feng_shui"
     assert route.preview_max_tokens >= 1000
     assert route.full_max_tokens >= 2400
+
+
+def test_full_reading_route_has_deeper_token_budget_for_paid_output() -> None:
+    route = get_product_route(flow_type="combined", surface="reading")
+    assert route.full_max_tokens >= 4200
 
 
 def test_lunar_validator_flags_daily_drift_and_duplicates() -> None:

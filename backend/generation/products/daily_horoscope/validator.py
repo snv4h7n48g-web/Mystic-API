@@ -18,6 +18,16 @@ _STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from", "if", "in", "into", "is", "it", "its",
     "of", "on", "or", "so", "than", "that", "the", "their", "there", "this", "to", "today", "tonight", "up", "with", "your",
 }
+_REQUIRED_SECTION_IDS = {
+    "today_theme",
+    "today_energy",
+    "best_move",
+    "watch_out_for",
+    "people_energy",
+    "work_focus",
+    "timing",
+    "closing_guidance",
+}
 
 
 def _normalize_text(text: str) -> str:
@@ -64,6 +74,14 @@ def validate_daily_payload(payload: dict) -> list[str]:
         if re.search(pattern, lowered):
             issues.append(f"daily_drift_detected:{pattern}")
 
+    present_section_ids = {
+        str(section.get("id", "")).strip()
+        for section in sections
+        if str(section.get("id", "")).strip()
+    }
+    missing = sorted(_REQUIRED_SECTION_IDS - present_section_ids)
+    issues.extend(f"daily_missing_section:{section_id}" for section_id in missing)
+
     stems = [stem for stem in (_first_content_stem(section.get("text", "")) for section in sections) if stem]
     repeated_stems = [stem for stem, count in Counter(stems).items() if count >= 2]
     issues.extend(f"daily_repeated_section_stem:{stem}" for stem in repeated_stems)
@@ -72,9 +90,22 @@ def validate_daily_payload(payload: dict) -> list[str]:
     for section in sections:
         section_id = str(section.get("id", ""))
         section_text = str(section.get("text", "") or "").strip()
+        headline = str(section.get("headline", "") or "").strip()
+        detail = str(section.get("detail", "") or "").strip()
         heading_issue = _headline_restate_issue(section_id, section_text)
         if heading_issue:
             issues.append(heading_issue)
+        if headline and detail:
+            normalized_headline = _normalize_text(headline)
+            normalized_detail = _normalize_text(detail)
+            if (
+                normalized_headline == normalized_detail
+                or normalized_detail.startswith(normalized_headline)
+                or normalized_headline.startswith(normalized_detail)
+            ):
+                issues.append(f"daily_headline_detail_repetition:{section_id}")
+        if section_id in _REQUIRED_SECTION_IDS and not detail:
+            issues.append(f"daily_missing_section_detail:{section_id}")
         normalized = _normalize_text(section_text)
         if normalized:
             if normalized in seen_bodies and seen_bodies[normalized] != section_id:

@@ -39,6 +39,7 @@ class NormalizedMysticOutput:
     palm_revelation: str = ""
     tarot_message: str = ""
     signals_agree: str = ""
+    daily_sections: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 @dataclass

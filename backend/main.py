@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 # Import our services
 from bedrock_service import get_bedrock_service
-from generation import get_generation_orchestrator
+from generation import QualityGateFailedError, get_generation_orchestrator
 from generation.validators import assess_section_safety, validate_product_payload
 from astrology_engine import get_astrology_engine
 from geocoding_service import get_geocoding_service
@@ -1966,6 +1966,11 @@ def generate_preview(
             ),
         }
 
+    except QualityGateFailedError as e:
+        raise HTTPException(
+            422,
+            f"Preview generation did not meet quality requirements yet. Please retry. ({str(e)})",
+        )
     except Exception as e:
         raise HTTPException(500, f"Preview generation failed: {str(e)}")
 
@@ -2371,6 +2376,11 @@ def _build_session_reading_response(
 
     except HTTPException:
         raise
+    except QualityGateFailedError as e:
+        raise HTTPException(
+            422,
+            f"Reading generation did not meet quality requirements yet. Please retry. ({str(e)})",
+        )
     except Exception as e:
         raise HTTPException(500, f"Reading generation failed: {str(e)}")
 
@@ -3210,6 +3220,11 @@ def generate_feng_shui_analysis(
             )
         except Exception as exc:
             message = str(exc).lower()
+            if isinstance(exc, QualityGateFailedError):
+                raise HTTPException(
+                    422,
+                    f"Feng Shui analysis did not meet quality requirements yet. Please retry. ({str(exc)})",
+                )
             if 'throttl' in message or 'rate limit' in message or 'too many requests' in message:
                 raise HTTPException(
                     503,

@@ -36,6 +36,18 @@ from .validators import ValidationResult, validate_product_payload
 logger = logging.getLogger("mystic.orchestration")
 
 
+class QualityGateFailedError(RuntimeError):
+    def __init__(self, *, product_key: str, flow_type: str, surface: str, issues: list[str]) -> None:
+        self.product_key = product_key
+        self.flow_type = flow_type
+        self.surface = surface
+        self.issues = issues
+        summary = ", ".join(issues[:6]) if issues else "validation failed"
+        super().__init__(
+            f"Quality gate failed for {product_key} {surface} ({flow_type}): {summary}"
+        )
+
+
 class MysticGenerationOrchestrator:
     """Phase-3 product-aware orchestration with bounded validation retries."""
 
@@ -130,10 +142,13 @@ class MysticGenerationOrchestrator:
         }
 
     def _quality_gate_policy(self, *, context: GenerationContext, product_key: str | None) -> dict:
+        hard_fail_products = {"daily", "lunar", "tarot", "palm", "feng_shui", "full_reading"}
+        is_preview = context.surface == "preview"
+        is_full = context.surface == "full"
         return {
-            "max_attempts": 2 if product_key else 1,
-            "attach_validation_metadata": context.surface == "full",
-            "hard_fail_on_exhausted_validation": False,
+            "max_attempts": 3 if product_key and is_full else 2 if product_key else 1,
+            "attach_validation_metadata": is_full,
+            "hard_fail_on_exhausted_validation": bool(product_key in hard_fail_products and is_full),
         }
 
     def _invoke_normalized_generation(
@@ -466,6 +481,17 @@ class MysticGenerationOrchestrator:
             context.surface,
             generation_metrics["summary"],
         )
+        if (
+            not final_validation.passed
+            and policy.get("hard_fail_on_exhausted_validation")
+            and final_validation.hard_fail
+        ):
+            raise QualityGateFailedError(
+                product_key=route.product_key,
+                flow_type=context.flow_type,
+                surface=context.surface,
+                issues=final_validation.issues,
+            )
         final_result.payload = final_payload
         final_result.generation_metrics = generation_metrics
         if final_attempt_count > 1:
