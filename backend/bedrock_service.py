@@ -324,10 +324,12 @@ class BedrockService:
     ) -> List[Dict[str, str]]:
         if flow_type == "tarot_solo":
             return [
-                {"delimiter": "OPENING", "id": "opening_invocation", "title": "OPENING", "instruction": "Frame the user's question through the tarot spread."},
-                {"delimiter": "TAROT_FOUNDATION", "id": "tarot_narrative", "title": "TAROT NARRATIVE", "instruction": "Interpret each card and position with concrete meaning."},
-                {"delimiter": "PATTERN_SYNTHESIS", "id": "integrated_synthesis", "title": "SYNTHESIS", "instruction": "Synthesize the card pattern into one clear thread."},
-                {"delimiter": "GUIDANCE", "id": "reflective_guidance", "title": "GUIDANCE", "instruction": "Offer reflective guidance from the cards."},
+                {"delimiter": "SPREAD_OVERVIEW", "id": "spread_overview", "title": "SPREAD OVERVIEW", "instruction": "Frame the user's question and name how the 3-card spread should be read."},
+                {"delimiter": "CARD_1", "id": "card_1", "title": "CARD 1", "instruction": "Explain the first card's meaning, position role, orientation, and relevance to the question."},
+                {"delimiter": "CARD_2", "id": "card_2", "title": "CARD 2", "instruction": "Explain the second card's meaning, position role, orientation, and relevance to the question."},
+                {"delimiter": "CARD_3", "id": "card_3", "title": "CARD 3", "instruction": "Explain the third card's meaning, position role, orientation, and relevance to the question."},
+                {"delimiter": "SPREAD_STORY", "id": "spread_story", "title": "SPREAD STORY", "instruction": "Synthesize the three cards into one coherent story without repeating the card chapters."},
+                {"delimiter": "GUIDANCE", "id": "reflective_guidance", "title": "GUIDANCE", "instruction": "Offer concrete guidance from the spread."},
                 {"delimiter": "CLOSING", "id": "closing_prompt", "title": "CLOSING", "instruction": "Close with one grounded question."},
             ]
         if flow_type == "palm_solo":
@@ -886,12 +888,11 @@ Themes: {json.dumps(themes, separators=(',', ':'))}"""
         system_prompt = f"""You are a Feng Shui consultant analyzing this space.
 
 ANALYSIS FRAMEWORK:
-1. Bagua map
-2. Five elements balance
-3. Energy flow (chi)
-4. Recommendations
-5. Priority actions
-6. Overall guidance
+1. Room overview
+2. What helps
+3. What blocks
+4. Practical fixes
+5. Action plan
 
 CRITICAL RULES:
 - Practical, grounded, no superstition
@@ -907,19 +908,16 @@ OUTPUT FORMAT:
 ---OVERVIEW---
 [text]
 
----BAGUA_MAP---
+---WHAT_HELPS---
 [text]
 
----ENERGY_FLOW---
+---WHAT_BLOCKS---
 [text]
 
----RECOMMENDATIONS---
+---PRACTICAL_FIXES---
 [text]
 
----PRIORITY_ACTIONS---
-[text]
-
----GUIDANCE---
+---ACTION_PLAN---
 [text]
 """
         user_content = f"""Context: {json.dumps(context, separators=(',', ':'))}
@@ -1019,7 +1017,7 @@ Vision analysis (JSON):
         return sections
 
     def _parse_feng_shui_sections(self, text: str) -> List[Dict[str, str]]:
-        section_map = {'OVERVIEW': 'overview', 'BAGUA_MAP': 'bagua_map', 'ENERGY_FLOW': 'energy_flow', 'RECOMMENDATIONS': 'recommendations', 'PRIORITY_ACTIONS': 'priority_actions', 'GUIDANCE': 'guidance'}
+        section_map = {'OVERVIEW': 'overview', 'WHAT_HELPS': 'what_helps', 'WHAT_BLOCKS': 'what_blocks', 'PRACTICAL_FIXES': 'practical_fixes', 'ACTION_PLAN': 'action_plan', 'BAGUA_MAP': 'bagua_map', 'ENERGY_FLOW': 'energy_flow', 'RECOMMENDATIONS': 'recommendations', 'PRIORITY_ACTIONS': 'priority_actions', 'GUIDANCE': 'guidance'}
         sections = []
         current_section = None
         current_text = []

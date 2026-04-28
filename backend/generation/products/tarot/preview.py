@@ -5,8 +5,9 @@ from .mapper import map_tarot_preview
 
 def build_tarot_preview_payload(*, normalized, metadata, unlock_price, product_id, entitlements, astrology_facts, tarot_payload):
     mapped = map_tarot_preview(normalized)
+    teaser_text = mapped['card_message'] or mapped['guidance_teaser'] or mapped['headline']
     return {
-        'teaser_text': mapped['headline'] or mapped['card_message'] or mapped['guidance_teaser'],
+        'teaser_text': teaser_text,
         'headline': mapped['headline'],
         'card_message': mapped['card_message'],
         'guidance_teaser': mapped['guidance_teaser'],

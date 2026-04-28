@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from generation.orchestration import MysticGenerationOrchestrator
-from generation.types import GenerationContext, GenerationMetadata, NormalizedMysticOutput
+from generation.types import (
+    GenerationContext,
+    GenerationMetadata,
+    NormalizedMysticOutput,
+    OrchestrationResult,
+)
 
 
 def _normalized() -> NormalizedMysticOutput:
@@ -62,6 +67,45 @@ def test_full_payload_keeps_validation_metadata_for_observability() -> None:
     assert payload["metadata"]["validation"]["product_key"] == "daily"
     assert payload["metadata"]["validation"]["attempts"] == 1
     assert payload["metadata"]["expected_section_ids"]
+
+
+def test_daily_session_reading_passes_astrology_facts_to_payload_builder(monkeypatch) -> None:
+    orchestrator = MysticGenerationOrchestrator()
+    captured = {}
+
+    def _fake_generate_with_quality_gate(**kwargs):
+        captured.update(kwargs["payload_builder_kwargs"])
+        return OrchestrationResult(payload={"metadata": {}}, metadata=_metadata())
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_generate_with_quality_gate",
+        _fake_generate_with_quality_gate,
+    )
+
+    result = orchestrator.build_session_reading_result(
+        session={
+            "id": "daily-session",
+            "inputs": {
+                "flow_type": "daily_horoscope",
+                "question_intention": "What should I focus on today?",
+            },
+            "locale": "en-AU",
+            "timezone": "Australia/Sydney",
+            "style": "grounded",
+        },
+        user=None,
+        astrology_facts={"sun_sign": "Virgo", "moon_sign": "Capricorn"},
+        tarot_payload={},
+        palm_features=[],
+        include_palm=False,
+        deep_access=True,
+        content_contract={},
+    )
+
+    assert result.metadata.continuity_source_session_id == "daily-session"
+    assert captured["astrology_facts"]["sun_sign"] == "Virgo"
+    assert captured["astrology_facts"]["moon_sign"] == "Capricorn"
 
 
 def test_combined_full_payload_uses_two_part_payoff_contract() -> None:

@@ -22,6 +22,7 @@ CONTRACT_INSTRUCTION = """DAILY HOROSCOPE CONTRACT:
 - Timing language should stay immediate: today, this morning, this afternoon, tonight, the next few hours.
 - For the full reading, all eight daily sections should be present and materially developed.
 - Each daily section must contain distinct content. Do not repeat the same sentence across theme, energy, best move, watch out for, people energy, work/focus, timing, or closing guidance.
-- In daily_sections, headline should be one crisp sentence; detail should be 2-4 fresh sentences that deepen the section instead of paraphrasing the headline.
+- In daily_sections, headline should be one crisp sentence; detail should be 2-4 fresh sentences, usually 35-70 words, that deepen the section instead of paraphrasing the headline.
+- Every detail block should include at least one concrete cue, action, timing note, or interpersonal/work implication. Do not leave the section as a one-line aphorism.
 - Translate astrology into practical day-language. The user should understand what to notice, do, avoid, or prioritise today.
 """

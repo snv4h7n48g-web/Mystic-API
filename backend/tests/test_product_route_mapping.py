@@ -14,6 +14,24 @@ def test_daily_horoscope_flow_uses_astrology_only() -> None:
     assert main._flow_uses_tarot("daily_horoscope") is False
 
 
+def test_daily_horoscope_flow_maps_to_subscription_product() -> None:
+    session = {
+        "inputs": {
+            "flow_type": "daily_horoscope",
+            "selected_tier": "basic",
+        },
+        "purchased_products": [],
+    }
+
+    assert main._required_session_product_id(session) == ProductSKU.DAILY_ASTRO_TAROT
+    assert main._session_preview_unlock_contract(session, user=None) == {
+        "unlock_amount": 9.99,
+        "product_id": ProductSKU.DAILY_ASTRO_TAROT,
+        "subscription_active": False,
+        "session_unlocked": False,
+    }
+
+
 def test_lunar_flow_uses_lunar_context_without_requiring_birth_date() -> None:
     assert main._flow_uses_astrology("lunar_new_year_solo") is True
     assert main._flow_requires_birth_date("lunar_new_year_solo") is False

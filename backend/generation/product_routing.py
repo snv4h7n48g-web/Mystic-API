@@ -51,8 +51,8 @@ PRODUCT_ROUTES: dict[str, ProductRoute] = {
         preview_model_id=_env("MYSTIC_ROUTE_DAILY_PREVIEW_MODEL", DEFAULT_NOVA_PREVIEW_MODEL),
         full_model_id=_env("MYSTIC_ROUTE_DAILY_FULL_MODEL", DEFAULT_ANTHROPIC_TEXT_MODEL),
         fallback_model_id=_env("MYSTIC_ROUTE_DAILY_FALLBACK_MODEL", DEFAULT_NOVA_FULL_MODEL),
-        preview_max_tokens=1000,
-        full_max_tokens=2600,
+        preview_max_tokens=1400,
+        full_max_tokens=3200,
         persona_hint="psychic_best_friend",
     ),
     "lunar": ProductRoute(

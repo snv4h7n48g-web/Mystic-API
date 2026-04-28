@@ -15,6 +15,7 @@ from .personas import get_persona
 from .product_contracts import get_product_contract
 from .product_routing import get_product_route_for_context
 from .products.daily_horoscope.continuity import filter_daily_continuity
+from .products.daily_horoscope.preview import build_daily_horoscope_preview_payload
 from .products.daily_horoscope.reading import build_daily_horoscope_reading_payload
 from .products.feng_shui.preview import build_feng_shui_preview_payload
 from .products.feng_shui.reading import build_feng_shui_analysis_payload
@@ -35,6 +36,22 @@ from .validators import ValidationResult, validate_product_payload
 
 logger = logging.getLogger("mystic.orchestration")
 
+_FULL_READING_BLOCKING_ISSUES = {
+    "full_reading_missing_opening",
+    "full_reading_missing_astrology_section",
+    "full_reading_missing_palm_section",
+    "full_reading_missing_tarot_section",
+    "full_reading_missing_synthesis_section",
+    "full_reading_missing_asking_section",
+    "full_reading_missing_next_move_section",
+    "full_reading_incomplete_snapshot",
+}
+
+_FULL_READING_BLOCKING_ISSUE_PREFIXES = (
+    "full_reading_stub_",
+    "full_reading_stub_section:",
+)
+
 
 class QualityGateFailedError(RuntimeError):
     def __init__(self, *, product_key: str, flow_type: str, surface: str, issues: list[str]) -> None:
@@ -50,6 +67,28 @@ class QualityGateFailedError(RuntimeError):
 
 class MysticGenerationOrchestrator:
     """Phase-3 product-aware orchestration with bounded validation retries."""
+
+    def _should_hard_fail_validation(
+        self,
+        *,
+        context: GenerationContext,
+        product_key: str | None,
+        validation: ValidationResult,
+    ) -> bool:
+        if not validation.hard_fail or not product_key:
+            return False
+        if product_key != "full_reading":
+            return True
+        if context.flow_type != "combined":
+            return True
+        return any(
+            issue in _FULL_READING_BLOCKING_ISSUES
+            or any(
+                issue.startswith(prefix)
+                for prefix in _FULL_READING_BLOCKING_ISSUE_PREFIXES
+            )
+            for issue in validation.issues
+        )
 
     def _build_lunar_domain_context(self, *, session: dict) -> dict[str, Any]:
         inputs = session.get("inputs") or {}
@@ -142,13 +181,11 @@ class MysticGenerationOrchestrator:
         }
 
     def _quality_gate_policy(self, *, context: GenerationContext, product_key: str | None) -> dict:
-        hard_fail_products = {"daily", "lunar", "tarot", "palm", "feng_shui", "full_reading"}
-        is_preview = context.surface == "preview"
         is_full = context.surface == "full"
         return {
-            "max_attempts": 3 if product_key and is_full else 2 if product_key else 1,
+            "max_attempts": 2 if product_key else 1,
             "attach_validation_metadata": is_full,
-            "hard_fail_on_exhausted_validation": bool(product_key in hard_fail_products and is_full),
+            "hard_fail_on_exhausted_validation": False,
         }
 
     def _invoke_normalized_generation(
@@ -298,6 +335,16 @@ class MysticGenerationOrchestrator:
 
     def _build_payload_for_context(self, *, context: GenerationContext, normalized: NormalizedMysticOutput, metadata: GenerationMetadata, unlock_price: dict | None = None, product_id: str | None = None, entitlements: dict | None = None, astrology_facts: dict | None = None, tarot_payload: dict | None = None, palm_features: list[dict] | None = None, include_palm: bool = False, deep_access: bool = False, content_contract: dict | None = None, person1: dict | None = None, person2: dict | None = None, chart1: dict | None = None, chart2: dict | None = None, zodiac1: dict | None = None, zodiac2: dict | None = None, synastry: dict | None = None, zodiac_harmony: dict | None = None, analysis: dict | None = None, price_amount: float = 0.0) -> dict:
         if context.object_type == "session" and context.surface == "preview":
+            if context.flow_type == "daily_horoscope":
+                return build_daily_horoscope_preview_payload(
+                    normalized=normalized,
+                    metadata=metadata,
+                    unlock_price=unlock_price or {},
+                    product_id=product_id or "",
+                    entitlements=entitlements or {},
+                    astrology_facts=astrology_facts or {},
+                    tarot_payload=tarot_payload or {},
+                )
             if context.flow_type == "lunar_new_year_solo":
                 return build_lunar_preview_payload(
                     normalized=normalized,
@@ -320,11 +367,20 @@ class MysticGenerationOrchestrator:
             )
         if context.object_type == "session" and context.surface == "full":
             payload = (
-                build_daily_horoscope_reading_payload(normalized=normalized, metadata=metadata)
+                build_daily_horoscope_reading_payload(
+                    normalized=normalized,
+                    metadata=metadata,
+                    astrology_facts=astrology_facts or {},
+                )
                 if context.flow_type == "daily_horoscope"
                 else build_lunar_reading_payload(normalized=normalized, metadata=metadata, lunar_context=(content_contract or {}).get("lunar_context"))
                 if context.flow_type == "lunar_new_year_solo"
-                else build_tarot_reading_payload(normalized=normalized, metadata=metadata)
+                else build_tarot_reading_payload(
+                    normalized=normalized,
+                    metadata=metadata,
+                    tarot_payload=tarot_payload or {},
+                    question=context.question,
+                )
                 if context.flow_type == "tarot_solo"
                 else build_sun_moon_reading_payload(normalized=normalized, metadata=metadata)
                 if context.flow_type == "sun_moon_solo"
@@ -455,7 +511,7 @@ class MysticGenerationOrchestrator:
         }
         self._attach_generation_metrics(payload=final_payload, metrics=generation_metrics)
         self._attach_contract_metadata(context=context, payload=final_payload, validation=final_validation, attempts=final_attempt_count)
-        final_guidance_text = next((section.get("text", "") for section in final_payload.get("sections", []) if section.get("id") in {"practical_guidance", "reflective_guidance"}), "")
+        final_guidance_text = next((section.get("text", "") for section in final_payload.get("sections", []) if section.get("id") in {"practical_guidance", "reflective_guidance", "practical_fixes", "action_plan"}), "")
         logger.warning(
             "quality_gate_final product=%s flow=%s surface=%s attempts=%s retries=%s fallback=%s total_duration_ms=%s queue_total_ms=%s model_total_ms=%s ttfo_ms=%s passed=%s issues=%s guidance=%r timing_summary=%s",
             route.product_key,
@@ -484,7 +540,11 @@ class MysticGenerationOrchestrator:
         if (
             not final_validation.passed
             and policy.get("hard_fail_on_exhausted_validation")
-            and final_validation.hard_fail
+            and self._should_hard_fail_validation(
+                context=context,
+                product_key=route.product_key,
+                validation=final_validation,
+            )
         ):
             raise QualityGateFailedError(
                 product_key=route.product_key,
@@ -612,6 +672,7 @@ class MysticGenerationOrchestrator:
             },
             contract_instruction=(contract.contract_instruction if contract else None),
             payload_builder_kwargs={
+                "astrology_facts": astrology_facts,
                 "tarot_payload": tarot_payload,
                 "palm_features": palm_features or [],
                 "include_palm": include_palm,

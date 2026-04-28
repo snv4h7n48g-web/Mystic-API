@@ -18,6 +18,7 @@ def test_combined_preview_validator_accepts_valid_full_reading_payload() -> None
         },
         "sections": [
             {"id": "reading_opening", "headline": "A threshold you can no longer dodge", "text": "The pattern around this question is becoming impossible to ignore, and it is asking you to stop treating your intuition like background noise while you decide what matters most."},
+            {"id": "astrological_foundation", "headline": "The chart gives the choice a backbone", "text": "Your Aries Sun brings the fire to initiate, while the current emphasis on grounded timing asks that impulse to become strategy instead of reaction. The astrology does not remove the risk; it shows where courage needs structure so momentum can hold."},
             {"id": "palm_revelation", "headline": "What your palm is echoing", "text": "Your palm shows a steady head line and a responsive heart line, which suggests you are balancing caution with feeling instead of acting purely on impulse.", "evidence": {"palm": {"signals": [{"display_name": "Heart line", "observation": "clear and responsive", "relevance": "shows emotional honesty around this question"}]}}},
             {"id": "tarot_message", "headline": "How the cards frame the choice", "text": "The Fool appears in the first position of the spread, and the card's symbolism points to a deliberate leap that still needs conscious grounding before you move.", "evidence": {"tarot": {"cards": [{"card": "The Fool", "interpretation": "This card invites a fresh start with awareness instead of denial.", "question_link": "It reflects the choice you already know you need to make."}], "combined_interpretation": "The Fool in this spread asks for courageous but conscious movement."}}},
             {"id": "signals_agree", "headline": "Where the evidence converges", "text": "Both the palm evidence and the tarot spread point to the same truth: you are ready for movement, but only if you stop outsourcing your certainty to timing or permission."},
@@ -134,6 +135,7 @@ def test_daily_preview_validator_accepts_generic_or_specialized_meta_shapes() ->
 
     assert result.status == "passed"
     assert "preview_meta_complete:metadata" in result.checks
+    assert "daily_product_validator_skipped_for_generic_preview_envelope" in result.checks
 
 
 def test_tarot_preview_validator_accepts_generic_preview_envelope_without_full_tarot_sections() -> None:
@@ -163,13 +165,56 @@ def test_tarot_preview_validator_accepts_generic_preview_envelope_without_full_t
 def test_daily_reading_validator_allows_contract_subset_but_rejects_unknown_sections() -> None:
     payload = {
         "sections": [
-            {"id": "today_theme", "text": "Today asks for steady pacing instead of reactive overreach."},
-            {"id": "today_energy", "text": "Your attention improves when you reduce input and finish one thing at a time."},
-            {"id": "best_move", "text": "Choose the smallest task that clears emotional noise before lunch."},
-            {"id": "watch_out_for", "text": "Don't confuse urgency with importance when messages pile up."},
-            {"id": "closing_guidance", "text": "Keep the day simple enough that your body can stay with your decisions."},
+            {
+                "id": "today_theme",
+                "headline": "Steady pacing beats reactive overreach.",
+                "detail": "Start by narrowing the day to one useful priority instead of letting every message become equally loud. Your Virgo pattern works best when the plan is clean, visible, and small enough to finish before momentum gets diluted.",
+                "text": "Steady pacing beats reactive overreach.",
+            },
+            {
+                "id": "today_energy",
+                "headline": "Your attention improves when input is reduced.",
+                "detail": "The energy favors practical filtering: fewer tabs, fewer side conversations, and fewer half-promises. If you protect one block of uninterrupted time, the day becomes calmer because your nervous system can see what is actually being handled.",
+                "text": "Your attention improves when input is reduced.",
+            },
+            {
+                "id": "best_move",
+                "headline": "Clear emotional noise with one concrete task.",
+                "detail": "Choose the smallest task that removes friction before lunch, even if it is not the most impressive task. Send the clarifying note, tidy the open loop, or make the decision that stops the same thought from circling.",
+                "text": "Clear emotional noise with one concrete task.",
+            },
+            {
+                "id": "watch_out_for",
+                "headline": "Urgency is not the same as importance.",
+                "detail": "When messages pile up, pause before giving the loudest request automatic priority. The trap is reacting quickly to feel responsible, then ending the day with the meaningful work still untouched and quietly resented.",
+                "text": "Urgency is not the same as importance.",
+            },
+            {
+                "id": "people_energy",
+                "headline": "Keep conversations specific and kind.",
+                "detail": "People respond better when you name the actual need rather than implying it through stress. If a conversation starts to sprawl, bring it back to one question, one decision, or one clear next handoff.",
+                "text": "Keep conversations specific and kind.",
+            },
+            {
+                "id": "work_focus",
+                "headline": "Finish the thing that reduces tomorrow's drag.",
+                "detail": "Work flows best when you pick the task that will make the next twenty-four hours easier. Avoid polishing the visible surface while the underlying bottleneck remains untouched, especially if a practical admin step would release pressure.",
+                "text": "Finish the thing that reduces tomorrow's drag.",
+            },
+            {
+                "id": "timing",
+                "headline": "Use the morning for planning and the afternoon for action.",
+                "detail": "Morning favors sorting, prioritising, and deciding what does not deserve your attention today, especially before other people begin shaping the pace. Afternoon is better for sending, submitting, booking, or making the move that turns the plan into something outside your head.",
+                "text": "Use the morning for planning and the afternoon for action.",
+            },
+            {
+                "id": "closing_guidance",
+                "headline": "Keep the day simple enough to stay embodied.",
+                "detail": "Let the closing measure be steadiness, not how many fires you touched. If your body feels less braced tonight because you chose deliberately, the day has done its job even without dramatic progress.",
+                "text": "Keep the day simple enough to stay embodied.",
+            },
         ],
-        "full_text": "Today asks for steady pacing. Keep the day simple.",
+        "full_text": "Today asks for steady pacing. Keep the day simple enough that your body can stay with your decisions.",
         "metadata": {
             "persona_id": "premium_mystic",
             "llm_profile_id": "full_premium",

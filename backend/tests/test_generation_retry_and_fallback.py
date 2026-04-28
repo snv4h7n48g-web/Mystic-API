@@ -3,10 +3,9 @@ from __future__ import annotations
 import json
 import logging
 
-import pytest
-
-from generation.orchestration import MysticGenerationOrchestrator, QualityGateFailedError
+from generation.orchestration import MysticGenerationOrchestrator
 from generation.types import GenerationContext, GenerationMetadata, NormalizedMysticOutput, OrchestrationResult
+from generation.validators import RETRY_HINTS
 
 
 class StubRetryOrchestrator(MysticGenerationOrchestrator):
@@ -118,7 +117,7 @@ def test_retry_correction_applies_once_and_returns_corrected_payload(monkeypatch
                 product_key="tarot",
                 passed=False,
                 issues=["tarot_missing_card_specific_language"],
-                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
+                retry_hint=RETRY_HINTS["tarot"],
             ),
             ValidationResult(product_key="tarot", passed=True, issues=[]),
         ]
@@ -138,7 +137,7 @@ def test_retry_correction_applies_once_and_returns_corrected_payload(monkeypatch
 
     assert orchestrator.retry_instructions == [
         None,
-        "Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
+        RETRY_HINTS["tarot"],
     ]
     assert len(validation_spy.calls) == 2
     assert result.payload["sections"][0]["text"] == "The Hermit opens the spread."
@@ -150,7 +149,7 @@ def test_retry_correction_applies_once_and_returns_corrected_payload(monkeypatch
     assert result.output_tokens == 40
 
 
-def test_exhausted_retry_raises_quality_gate_error_for_full_payload(monkeypatch) -> None:
+def test_exhausted_retry_full_payload_returns_soft_failed_payload(monkeypatch) -> None:
     from generation.validators import ValidationResult
 
     orchestrator = StubRetryOrchestrator(
@@ -184,21 +183,21 @@ def test_exhausted_retry_raises_quality_gate_error_for_full_payload(monkeypatch)
                     product_key="tarot",
                     passed=False,
                     issues=["tarot_missing_card_specific_language"],
-                    retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
+                    retry_hint=RETRY_HINTS["tarot"],
                     hard_fail=True,
                 ),
                 ValidationResult(
                     product_key="tarot",
                     passed=False,
                     issues=["tarot_missing_card_specific_language", "tarot_missing_spread_context"],
-                    retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
+                    retry_hint=RETRY_HINTS["tarot"],
                     hard_fail=True,
                 ),
                 ValidationResult(
                     product_key="tarot",
                     passed=False,
                     issues=["tarot_missing_card_specific_language", "tarot_missing_spread_context"],
-                    retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
+                    retry_hint=RETRY_HINTS["tarot"],
                     hard_fail=True,
                 ),
             ]
@@ -206,20 +205,116 @@ def test_exhausted_retry_raises_quality_gate_error_for_full_payload(monkeypatch)
     monkeypatch.setattr("generation.orchestration.validate_product_payload", validation_spy)
 
     context = GenerationContext(object_id="1", object_type="session", flow_type="tarot_solo", surface="full")
-    with pytest.raises(QualityGateFailedError) as exc_info:
-        orchestrator._generate_with_quality_gate(
-            context=context,
-            persona_id="ancient_tarot_reader",
-            flow_id="tarot_reading",
-            continuity_context={},
-            domain_context={},
-            contract_instruction="tarot contract",
-            payload_builder_kwargs={},
-        )
+    result = orchestrator._generate_with_quality_gate(
+        context=context,
+        persona_id="ancient_tarot_reader",
+        flow_id="tarot_reading",
+        continuity_context={},
+        domain_context={},
+        contract_instruction="tarot contract",
+        payload_builder_kwargs={},
+    )
 
-    assert len(orchestrator.retry_instructions) == 3
-    assert len(validation_spy.calls) == 3
-    assert "tarot_missing_card_specific_language" in str(exc_info.value)
+    assert len(orchestrator.retry_instructions) == 2
+    assert len(validation_spy.calls) == 2
+    assert result.payload["metadata"]["validation"]["attempts"] == 2
+    assert result.payload["metadata"]["validation"]["valid"] is False
+    assert "tarot_missing_card_specific_language" in result.payload["metadata"]["validation"]["issues"]
+
+
+def test_exhausted_retry_combined_full_reading_returns_soft_failed_payload(monkeypatch) -> None:
+    from generation.validators import ValidationResult
+
+    orchestrator = StubRetryOrchestrator(
+        responses=[
+            _response(
+                opening="A threshold is here.",
+                current="The question is already active.",
+                emotional="The deeper pressure is clarity without motion.",
+                guidance="Clarity wants embodiment more than another loop of thought.",
+                closing="Return after the first move lands.",
+            ),
+            _response(
+                opening="A threshold is here.",
+                current="The question is already active.",
+                emotional="The deeper pressure is clarity without motion.",
+                guidance="Clarity wants embodiment more than another loop of thought.",
+                closing="Return after the first move lands.",
+            ),
+            _response(
+                opening="A threshold is here.",
+                current="The question is already active.",
+                emotional="The deeper pressure is clarity without motion.",
+                guidance="Clarity wants embodiment more than another loop of thought.",
+                closing="Return after the first move lands.",
+            ),
+        ]
+    )
+    validation_spy = ValidatorSpy(
+        [
+            ValidationResult(
+                product_key="full_reading",
+                passed=False,
+                issues=[
+                    "full_reading_next_move_missing_action",
+                    "full_reading_tarot_missing_card_level_interpretation",
+                ],
+                retry_hint="retry",
+                hard_fail=True,
+            ),
+            ValidationResult(
+                product_key="full_reading",
+                passed=False,
+                issues=[
+                    "full_reading_next_move_missing_action",
+                    "full_reading_tarot_missing_card_level_interpretation",
+                ],
+                retry_hint="retry",
+                hard_fail=True,
+            ),
+            ValidationResult(
+                product_key="full_reading",
+                passed=False,
+                issues=[
+                    "full_reading_next_move_missing_action",
+                    "full_reading_tarot_missing_card_level_interpretation",
+                ],
+                retry_hint="retry",
+                hard_fail=True,
+            ),
+        ]
+    )
+    monkeypatch.setattr("generation.orchestration.validate_product_payload", validation_spy)
+    monkeypatch.setattr(
+        "generation.orchestration.get_product_route_for_context",
+        lambda _context: type("Route", (), {"product_key": "full_reading"})(),
+    )
+    monkeypatch.setattr(
+        "generation.orchestration.get_product_contract",
+        lambda _product_key: type("Contract", (), {"product_key": "full_reading"})(),
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "_build_payload_for_context",
+        lambda **kwargs: {"sections": [], "metadata": {}},
+    )
+    monkeypatch.setattr(orchestrator, "_attach_generation_metrics", lambda **kwargs: None)
+    monkeypatch.setattr(orchestrator, "_attach_contract_metadata", lambda **kwargs: None)
+
+    context = GenerationContext(object_id="1", object_type="session", flow_type="combined", surface="full")
+    result = orchestrator._generate_with_quality_gate(
+        context=context,
+        persona_id="premium_mystic",
+        flow_id="session_reading",
+        continuity_context={},
+        domain_context={},
+        contract_instruction="full reading contract",
+        payload_builder_kwargs={},
+    )
+
+    assert len(orchestrator.retry_instructions) == 2
+    assert len(validation_spy.calls) == 2
+    assert result.payload == {"sections": [], "metadata": {}}
 
 
 def test_exhausted_retry_preview_payload_does_not_leak_validation_metadata(monkeypatch) -> None:
@@ -249,13 +344,13 @@ def test_exhausted_retry_preview_payload_does_not_leak_validation_metadata(monke
                 product_key="tarot",
                 passed=False,
                 issues=["tarot_missing_card_specific_language"],
-                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
+                retry_hint=RETRY_HINTS["tarot"],
             ),
             ValidationResult(
                 product_key="tarot",
                 passed=False,
                 issues=["tarot_missing_card_specific_language", "tarot_missing_spread_context"],
-                retry_hint="Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler.",
+                retry_hint=RETRY_HINTS["tarot"],
             ),
         ]
     )

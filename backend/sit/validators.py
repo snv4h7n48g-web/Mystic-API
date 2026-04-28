@@ -197,14 +197,17 @@ def validate_preview_payload(*, case_id: str, product_key: str, payload: dict) -
         "daily_preview",
         "feng_shui_preview",
     }:
-        validation = _validation_result_for(product_key, payload)
-        for issue in validation.issues:
-            if case_id == "compatibility_preview" and issue in _COMPAT_WARNING_PREFIXES:
-                warnings.append(issue)
-            else:
-                hard_failures.append(issue)
-        if not validation.issues:
-            checks.append("product_validator_passed")
+        if case_id == "daily_preview" and not isinstance(payload.get("sections"), list):
+            checks.append("daily_product_validator_skipped_for_generic_preview_envelope")
+        else:
+            validation = _validation_result_for(product_key, payload)
+            for issue in validation.issues:
+                if case_id == "compatibility_preview" and issue in _COMPAT_WARNING_PREFIXES:
+                    warnings.append(issue)
+                else:
+                    hard_failures.append(issue)
+            if not validation.issues:
+                checks.append("product_validator_passed")
 
     return _build_summary(checks=checks, warnings=warnings, hard_failures=hard_failures, validation=validation)
 

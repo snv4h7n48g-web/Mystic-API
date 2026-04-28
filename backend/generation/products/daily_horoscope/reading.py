@@ -19,8 +19,8 @@ def _build_section(section_id: str, title: str, block: dict[str, str]) -> dict:
     return payload
 
 
-def build_daily_horoscope_reading_payload(*, normalized, metadata):
-    mapped = map_daily_reading(normalized)
+def build_daily_horoscope_reading_payload(*, normalized, metadata, astrology_facts=None):
+    mapped = map_daily_reading(normalized, astrology_facts=astrology_facts)
     sections = [
         _build_section("today_theme", "TODAY'S THEME", mapped["today_theme"]),
         _build_section("today_energy", "TODAY'S ENERGY", mapped["today_energy"]),

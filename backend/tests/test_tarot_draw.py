@@ -19,6 +19,8 @@ def test_draw_tarot_supports_single_card_spread():
 
 
 def test_tarot_matcher_respects_flow_card_count():
-    assert main._tarot_matches_flow({"tarot": {"cards": [{"card": "A", "position": "Card"}]}}, "tarot_solo") is True
+    assert main._tarot_matches_flow({"tarot": {"cards": [{"card": "A", "position": "Card"}]}}, "tarot_solo") is False
     assert main._tarot_matches_flow({"tarot": {"cards": [{"card": "A", "position": "Card"}]}}, "combined") is False
-    assert main._tarot_matches_flow({"tarot": {"cards": [{"card": "A", "position": "Past"}, {"card": "B", "position": "Present"}, {"card": "C", "position": "Guidance"}]}}, "combined") is True
+    three_card_payload = {"tarot": {"cards": [{"card": "A", "position": "Past"}, {"card": "B", "position": "Present"}, {"card": "C", "position": "Guidance"}]}}
+    assert main._tarot_matches_flow(three_card_payload, "tarot_solo") is True
+    assert main._tarot_matches_flow(three_card_payload, "combined") is True

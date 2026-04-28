@@ -113,9 +113,18 @@ def _has_structural_duplication(text: str) -> bool:
 def validate_tarot_payload(payload: dict) -> list[str]:
     sections = payload.get("sections", [])
     issues: list[str] = []
-    opening = _text_for(sections, "opening_invocation")
-    narrative = _text_for(sections, "tarot_narrative")
-    synthesis = _text_for(sections, "integrated_synthesis", "current_pattern")
+    opening = _text_for(sections, "opening_invocation", "spread_overview")
+    card_sections = [
+        section
+        for section in sections
+        if str(section.get("id") or "").startswith("card_")
+    ]
+    card_chapter_text = " ".join(
+        _text_for([section], str(section.get("id") or ""))
+        for section in card_sections
+    ).strip()
+    narrative = _text_for(sections, "tarot_narrative") or card_chapter_text
+    synthesis = _text_for(sections, "spread_story", "integrated_synthesis", "current_pattern")
     guidance = _text_for(sections, "reflective_guidance", "practical_guidance")
 
     if not narrative.strip():
@@ -128,6 +137,26 @@ def validate_tarot_payload(payload: dict) -> list[str]:
     lowered = narrative.casefold()
     card_hits = sum(1 for marker in CARD_MARKERS if marker in lowered)
     structure_hits = sum(1 for marker in SYMBOLIC_MARKERS if marker in lowered)
+
+    if card_sections:
+        if not _text_for(sections, "spread_overview").strip():
+            issues.append("tarot_missing_spread_overview")
+        if not _text_for(sections, "spread_story").strip():
+            issues.append("tarot_missing_spread_story")
+        for section in card_sections:
+            section_id = str(section.get("id") or "")
+            card_text = _text_for([section], section_id)
+            lowered_card = card_text.casefold()
+            if _word_count(card_text) < 35:
+                issues.append(f"tarot_card_chapter_too_shallow:{section_id}")
+            if not any(marker in lowered_card for marker in ["position", "past", "present", "guidance", "card role", "spread"]):
+                issues.append(f"tarot_card_chapter_missing_position_logic:{section_id}")
+            if not any(marker in lowered_card for marker in ["upright", "reversed", "orientation", "blocked", "clearer expression"]):
+                issues.append(f"tarot_card_chapter_missing_orientation_logic:{section_id}")
+            if not any(marker in lowered_card for marker in ["question", "you", "your"]):
+                issues.append(f"tarot_card_chapter_missing_question_link:{section_id}")
+        if synthesis and _is_too_similar(card_chapter_text, synthesis):
+            issues.append("tarot_card_story_repetition")
 
     if not any(marker in lowered for marker in CARD_MARKERS):
         issues.append("tarot_missing_card_specific_language")

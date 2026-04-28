@@ -16,6 +16,8 @@ from dotenv import load_dotenv
 # Import our services
 from bedrock_service import get_bedrock_service
 from generation import QualityGateFailedError, get_generation_orchestrator
+from generation.parser import GenerationParseError
+from generation.prompts.composer import PROMPT_VERSION as CURRENT_PROMPT_VERSION
 from generation.validators import assess_section_safety, validate_product_payload
 from astrology_engine import get_astrology_engine
 from geocoding_service import get_geocoding_service
@@ -862,6 +864,17 @@ def _extract_reading(session: dict) -> Optional[dict]:
     return reading if isinstance(reading, dict) else None
 
 
+def _session_prompt_version(session: dict, kind: str) -> Optional[str]:
+    if kind == "preview":
+        value = session.get("preview_prompt_version")
+    else:
+        value = session.get("reading_prompt_version")
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
+
+
 def _find_latest_response_today(
     sessions: List[dict],
     tz_name: Optional[str]
@@ -885,6 +898,7 @@ def _find_latest_response_today(
                     "payload": payload,
                     "session_id": sess.get("id"),
                     "generated_at": generated_at,
+                    "prompt_version": _session_prompt_version(sess, kind),
                 }
 
     return latest
@@ -1139,7 +1153,7 @@ def _current_lunar_year_context() -> Dict[str, Any]:
 
 
 def _expected_tarot_card_count(flow_type: str) -> int:
-    return 1 if flow_type == "tarot_solo" else 3
+    return 3
 
 
 def _tarot_matches_flow(session: Optional[Dict[str, Any]], flow_type: str) -> bool:
@@ -1340,6 +1354,9 @@ def _required_session_product_id(session: Optional[Dict[str, Any]]) -> Optional[
 
     if flow_type == "blessing_solo":
         return ProductSKU.DARUMA_BLESSING
+
+    if flow_type == "daily_horoscope":
+        return ProductSKU.DAILY_ASTRO_TAROT
 
     selected_tier = (inputs.get("selected_tier") or "").lower()
     if selected_tier == "complete":
@@ -1779,6 +1796,8 @@ def generate_preview(
             )
             if latest_signature != current_contract_signature:
                 latest_today = None
+        if latest_today and latest_today.get("prompt_version") != CURRENT_PROMPT_VERSION:
+            latest_today = None
         if latest_today:
             if latest_today["kind"] == "preview":
                 db_update_session(
@@ -1967,12 +1986,52 @@ def generate_preview(
         }
 
     except QualityGateFailedError as e:
-        raise HTTPException(
-            422,
-            f"Preview generation did not meet quality requirements yet. Please retry. ({str(e)})",
-        )
+        raise _quality_gate_http_exception("Preview", e)
+    except GenerationParseError as e:
+        raise _malformed_output_http_exception("Preview", e)
     except Exception as e:
         raise HTTPException(500, f"Preview generation failed: {str(e)}")
+
+
+def _quality_gate_http_exception(subject: str, exc: QualityGateFailedError) -> HTTPException:
+    logger.warning(
+        "quality_gate_http_exception subject=%s product=%s flow=%s surface=%s issues=%s",
+        subject,
+        exc.product_key,
+        exc.flow_type,
+        exc.surface,
+        exc.issues,
+    )
+    return HTTPException(
+        422,
+        {
+            "code": "quality_gate_failed",
+            "message": f"{subject} is still being refined. Please retry for a fuller pass.",
+            "user_message": f"{subject} is still being refined. Please retry for a fuller pass.",
+            "retryable": True,
+            "product_key": exc.product_key,
+            "flow_type": exc.flow_type,
+            "surface": exc.surface,
+            "issues": exc.issues,
+        },
+    )
+
+
+def _malformed_output_http_exception(subject: str, exc: Exception) -> HTTPException:
+    logger.warning(
+        "generation_output_http_exception subject=%s error=%s",
+        subject,
+        exc,
+    )
+    return HTTPException(
+        422,
+        {
+            "code": "generation_output_invalid",
+            "message": f"{subject} came back incomplete from the model. Please retry for a cleaner pass.",
+            "user_message": f"{subject} came back incomplete from the model. Please retry for a cleaner pass.",
+            "retryable": True,
+        },
+    )
 
 
 def _serialize_sse_event(event: str, data: Dict[str, Any]) -> str:
@@ -2377,10 +2436,9 @@ def _build_session_reading_response(
     except HTTPException:
         raise
     except QualityGateFailedError as e:
-        raise HTTPException(
-            422,
-            f"Reading generation did not meet quality requirements yet. Please retry. ({str(e)})",
-        )
+        raise _quality_gate_http_exception("Reading", e)
+    except GenerationParseError as e:
+        raise _malformed_output_http_exception("Reading", e)
     except Exception as e:
         raise HTTPException(500, f"Reading generation failed: {str(e)}")
 
@@ -3221,10 +3279,9 @@ def generate_feng_shui_analysis(
         except Exception as exc:
             message = str(exc).lower()
             if isinstance(exc, QualityGateFailedError):
-                raise HTTPException(
-                    422,
-                    f"Feng Shui analysis did not meet quality requirements yet. Please retry. ({str(exc)})",
-                )
+                raise _quality_gate_http_exception("Feng Shui analysis", exc)
+            if isinstance(exc, GenerationParseError):
+                raise _malformed_output_http_exception("Feng Shui analysis", exc)
             if 'throttl' in message or 'rate limit' in message or 'too many requests' in message:
                 raise HTTPException(
                     503,
@@ -3455,6 +3512,9 @@ def record_purchase(
         product = get_product(payload.product_id)
     except ValueError:
         raise HTTPException(400, f"Invalid product ID: {payload.product_id}")
+
+    if product.get("is_subscription"):
+        raise HTTPException(400, "Use /v1/subscription/activate for subscription purchases")
     
     # Get existing purchases
     purchased = session.get("purchased_products") or []

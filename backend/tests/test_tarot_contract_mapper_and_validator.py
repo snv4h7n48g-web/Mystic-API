@@ -1,3 +1,6 @@
+import json
+
+from generation.parser import parse_normalized_output
 from generation.product_contracts import get_product_contract
 from generation.products.tarot.mapper import map_tarot_reading
 from generation.products.tarot.reading import build_tarot_reading_payload
@@ -132,6 +135,76 @@ def _metadata() -> GenerationMetadata:
     )
 
 
+def _tarot_payload() -> dict:
+    return {
+        'spread': 'Past / Present / Guidance',
+        'cards': [
+            {
+                'card': 'The Hermit',
+                'position': 'Past',
+                'orientation': 'upright',
+                'interpretation': 'discernment, solitude, and refusing noisy answers',
+                'question_link': 'your question is shaped by a prior season of stepping back to hear yourself clearly',
+            },
+            {
+                'card': 'Two of Wands',
+                'position': 'Present',
+                'orientation': 'upright',
+                'interpretation': 'planning, tension between known ground and a wider horizon',
+                'question_link': 'you are standing between staying safe and choosing a direction that asks for visible commitment',
+            },
+            {
+                'card': 'The Moon',
+                'position': 'Guidance',
+                'orientation': 'reversed',
+                'interpretation': 'confusion beginning to drain away, but only if fear is named directly',
+                'question_link': 'the answer depends on separating intuition from anxiety before you act',
+            },
+        ],
+    }
+
+
+def test_parse_normalized_output_accepts_tarot_card_chapters() -> None:
+    normalized = parse_normalized_output(
+        json.dumps(
+            {
+                'opening_hook': 'The spread opens around a choice that deserves quieter attention.',
+                'current_pattern': 'The cards show a move from solitude into deliberate direction.',
+                'emotional_truth': 'The deeper pressure is the fear of choosing before every uncertainty has cleared.',
+                'practical_guidance': 'Write the choice plainly, name the fear underneath it, and take one low-risk step before the day ends.',
+                'tarot_spread_overview': 'This Past, Present, Guidance spread reads like a lantern, a map, and a mist lifting.',
+                'tarot_card_chapters': [
+                    {
+                        'card': 'The Hermit',
+                        'position': 'Past',
+                        'orientation': 'upright',
+                        'card_meaning': 'solitude that sharpens discernment',
+                        'position_meaning': 'In the past position, The Hermit describes the pattern that prepared the current choice.',
+                        'question_relevance': 'your question has already been shaped by what became obvious in private',
+                        'personal_implication': 'You do not need to apologize for needing quiet before movement.',
+                    }
+                ],
+                'tarot_spread_story': 'The spread moves from withdrawal, into planning, then into fear becoming visible enough to work with.',
+                'theme_tags': ['tarot'],
+            }
+        )
+    )
+
+    assert normalized.tarot_spread_overview.startswith('This Past, Present, Guidance spread')
+    assert normalized.tarot_card_chapters == [
+        {
+            'card': 'The Hermit',
+            'position': 'Past',
+            'orientation': 'upright',
+            'card_meaning': 'solitude that sharpens discernment',
+            'position_meaning': 'In the past position, The Hermit describes the pattern that prepared the current choice.',
+            'question_relevance': 'your question has already been shaped by what became obvious in private',
+            'personal_implication': 'You do not need to apologize for needing quiet before movement.',
+        }
+    ]
+    assert normalized.tarot_spread_story.startswith('The spread moves from withdrawal')
+
+
 def test_tarot_reading_payload_splits_summary_from_deeper_body() -> None:
     payload = build_tarot_reading_payload(
         normalized=NormalizedMysticOutput(
@@ -151,6 +224,64 @@ def test_tarot_reading_payload_splits_summary_from_deeper_body() -> None:
     assert narrative['text'] == 'The Hermit in the present position slows the whole spread down and asks for deliberate distance from noise.'
     assert 'Two of Wands shifts the message from withdrawal to planning' in narrative['detail']
     assert narrative['detail'] != narrative['text']
+
+
+def test_tarot_reading_payload_builds_three_card_chapter_flow() -> None:
+    payload = build_tarot_reading_payload(
+        normalized=NormalizedMysticOutput(
+            opening_hook='The spread opens around a choice that deserves quieter attention.',
+            current_pattern='The cards show a move from solitude into deliberate direction.',
+            emotional_truth='The deeper pressure is the fear of choosing before every uncertainty has cleared.',
+            practical_guidance='Write the choice plainly, name the fear underneath it, and take one low-risk step before the day ends.',
+            tarot_spread_overview='This Past, Present, Guidance spread reads like a lantern, a map, and a mist lifting: first what prepared you, then what asks for commitment, then what must be named before you move.',
+            tarot_card_chapters=[
+                {
+                    'card': 'The Hermit',
+                    'position': 'Past',
+                    'orientation': 'upright',
+                    'card_meaning': 'solitude that sharpens discernment',
+                    'position_meaning': 'In the past position, The Hermit describes the pattern that prepared this question by teaching you to distrust noisy answers.',
+                    'reversal_message': 'Because it is upright, its lantern is available as a clear method rather than a blocked retreat.',
+                    'question_relevance': 'your question has already been shaped by what became obvious in private',
+                    'personal_implication': 'You are not starting from nothing; you are carrying evidence gathered in quiet, and that evidence deserves more authority than the loudest pressure in the room.',
+                },
+                {
+                    'card': 'Two of Wands',
+                    'position': 'Present',
+                    'orientation': 'upright',
+                    'card_meaning': 'planning at the edge of a wider horizon',
+                    'position_meaning': 'In the present position, Two of Wands makes the card role practical: it asks you to turn private clarity into an actual direction.',
+                    'reversal_message': 'Because it is upright, the choice can be organised instead of dramatised.',
+                    'question_relevance': 'you are choosing between known safety and a direction that asks for visible commitment',
+                    'personal_implication': 'The task is not to leap blindly; it is to pick the path you can support with one concrete move.',
+                },
+                {
+                    'card': 'The Moon',
+                    'position': 'Guidance',
+                    'orientation': 'reversed',
+                    'card_meaning': 'confusion draining away once fear is named',
+                    'position_meaning': 'In the guidance position, The Moon reversed shows the spread steering you toward honest sorting rather than fantasy or panic.',
+                    'reversal_message': 'Because it is reversed, the orientation points to a blocked fog beginning to clear, but only when anxiety is not allowed to masquerade as intuition.',
+                    'question_relevance': 'the answer depends on separating intuition from anxiety before you act',
+                    'personal_implication': 'Do not wait for perfect certainty; wait only long enough to name the fear, then let the next move be modest and real.',
+                },
+            ],
+            tarot_spread_story='The Hermit gives the past its lantern, Two of Wands turns that light toward a choice, and The Moon reversed warns that the final obstacle is not mystery but unlabelled fear. Together the cards tell a coherent story: private knowing is ready to become planned movement, as long as anxiety is named before it is obeyed.',
+        ),
+        metadata=_metadata(),
+        tarot_payload=_tarot_payload(),
+        question='What am I not admitting about this decision?',
+    )
+
+    section_ids = [section['id'] for section in payload['sections']]
+    assert section_ids[:5] == ['spread_overview', 'card_1', 'card_2', 'card_3', 'spread_story']
+    assert 'The Moon reversed in the Guidance position' in payload['sections'][3]['headline']
+    assert 'anxiety is not allowed to masquerade as intuition' in payload['sections'][3]['detail']
+    assert payload['metadata']['evidence']['tarot']['cards'][2]['orientation'] == 'reversed'
+    assert payload['metadata']['evidence']['tarot']['combined_interpretation'].startswith('The Hermit gives the past')
+
+    result = validate_product_payload('tarot', payload)
+    assert result.valid is True
 
 
 def test_tarot_validator_accepts_detailed_card_led_payload() -> None:

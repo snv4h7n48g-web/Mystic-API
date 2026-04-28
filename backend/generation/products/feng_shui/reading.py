@@ -12,12 +12,11 @@ def build_feng_shui_analysis_payload(*, normalized, metadata, analysis=None, vis
         vision_result=vision_result or {},
     )
     sections = [
-        {"id": "overview", "title": "OVERVIEW", "text": mapped["overview"]},
-        {"id": "bagua_map", "title": "BAGUA MAP", "text": mapped["bagua_map"]},
-        {"id": "energy_flow", "title": "ENERGY FLOW", "text": mapped["energy_flow"]},
-        {"id": "priority_actions", "title": "PRIORITY ACTIONS", "text": mapped["priority_actions"]},
-        {"id": "recommendations", "title": "RECOMMENDATIONS", "text": mapped["recommendations"]},
-        {"id": "guidance", "title": "GUIDANCE", "text": mapped["guidance"]},
+        {"id": "overview", "title": "ROOM OVERVIEW", "text": mapped["overview"]},
+        {"id": "what_helps", "title": "WHAT HELPS", "text": mapped["what_helps"]},
+        {"id": "what_blocks", "title": "WHAT BLOCKS", "text": mapped["what_blocks"]},
+        {"id": "practical_fixes", "title": "PRACTICAL FIXES", "text": mapped["practical_fixes"]},
+        {"id": "action_plan", "title": "ACTION PLAN", "text": mapped["action_plan"]},
     ]
     sections = [section for section in sections if section["text"] and section["text"].strip()]
     return {

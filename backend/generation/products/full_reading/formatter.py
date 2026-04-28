@@ -75,6 +75,7 @@ _SECTION_DETAIL_FALLBACKS = {
     'your_next_move': 'It turns that insight into a concrete step you can actually take.',
     'next_return_invitation': 'It gives the reading a clean place to close and return later.',
 }
+_ACTION_MARKERS = ('choose', 'send', 'ask', 'name', 'make', 'begin', 'start', 'stop', 'schedule', 'say', 'write', 'set', 'clear', 'take')
 
 
 def _clean(text: str | None) -> str:
@@ -87,6 +88,10 @@ def _normalize_whitespace(text: str | None) -> str:
 
 def _normalize_for_compare(text: str) -> str:
     return re.sub(r'\W+', ' ', _normalize_whitespace(text).casefold()).strip()
+
+
+def _content_token_count(text: str) -> int:
+    return len(re.findall(r"[a-z0-9']+", _normalize_whitespace(text).casefold()))
 
 
 def _dedupe_sentences(text: str) -> str:
@@ -242,6 +247,38 @@ def _tarot_cards(tarot_payload: dict | None) -> list[dict]:
                 }
             )
     return parsed
+
+
+def _tarot_default_question_link(card: dict, index: int, question: str | None) -> str:
+    focus = _question_focus_phrase(question)
+    role_hint = _tarot_role_hint(_clean(card.get('position')), index)
+    if focus:
+        return f"it matters because this card names {role_hint} in relation to {focus}"
+    return f"it matters because this card names {role_hint} in the larger spread"
+
+
+def _enrich_tarot_cards(tarot_cards: list[dict], question: str | None) -> list[dict]:
+    enriched: list[dict] = []
+    for index, raw_card in enumerate(tarot_cards):
+        card = dict(raw_card)
+        interpretation = _clean(card.get('interpretation')) or _tarot_reference_meaning(card)
+        if _content_token_count(interpretation) < 12:
+            role_hint = _tarot_role_hint(_clean(card.get('position')), index)
+            focus = _question_focus_phrase(question)
+            suffix = (
+                f" It shows how {role_hint} is shaping {focus}."
+                if focus
+                else f" It shows how {role_hint} is shaping the reading."
+            )
+            interpretation = f"{interpretation.rstrip('.')}." if interpretation else "This card is active in the spread."
+            interpretation = f"{interpretation.rstrip('.')} {suffix.strip()}".strip()
+        question_link = _clean(card.get('question_link'))
+        if not question_link:
+            question_link = _tarot_default_question_link(card, index, question)
+        card['interpretation'] = _dedupe_sentences(interpretation).strip()
+        card['question_link'] = _dedupe_sentences(question_link).strip()
+        enriched.append(card)
+    return enriched
 
 
 def _tarot_cards_summary(tarot_payload: dict | None) -> str:
@@ -737,6 +774,38 @@ def _enrich_tarot_message(*, tarot_message: str, tarot_cards: list[dict], tarot_
     return narrative or _dedupe_sentences(tarot_message)
 
 
+def _has_action_marker(text: str) -> bool:
+    lowered = _normalize_whitespace(text).casefold()
+    return any(marker in lowered for marker in _ACTION_MARKERS)
+
+
+def _enrich_next_move(next_move: str, *, question: str | None, tarot_cards: list[dict]) -> str:
+    cleaned = _dedupe_sentences(next_move)
+    if not cleaned:
+        return ''
+
+    focus = _question_focus_phrase(question)
+    if focus:
+        action_line = (
+            f"Start by naming the clearest decision you can make about {focus}, then take one visible step today that turns the reading into a lived change instead of another private loop."
+        )
+    elif tarot_cards:
+        lead_card = _clean(tarot_cards[0].get('card'))
+        action_line = (
+            f"Start by taking one visible step that honours what {lead_card or 'the cards'} is already making obvious, rather than waiting for the feeling to become easier or cleaner."
+        )
+    else:
+        action_line = "Start by taking one visible step today that turns this insight into a concrete change instead of leaving it as a thought."
+
+    if not _has_action_marker(cleaned):
+        return action_line
+    if _content_token_count(cleaned) >= 12:
+        return cleaned
+    if not cleaned:
+        return action_line
+    return _dedupe_sentences(f"{cleaned.rstrip('.')} {action_line}").strip()
+
+
 def build_full_reading_payload(
     *,
     normalized: NormalizedMysticOutput,
@@ -768,7 +837,7 @@ def build_full_reading_payload(
         'best_next_move': _clean(normalized.snapshot_best_next_move) or _first_sentence(next_move or normalized.practical_guidance),
     }
 
-    tarot_cards = _tarot_cards(tarot_payload)
+    tarot_cards = _enrich_tarot_cards(_tarot_cards(tarot_payload), question)
     tarot_cards_summary = _tarot_cards_summary(tarot_payload)
     tarot_spread = _clean((tarot_payload or {}).get('spread') if isinstance(tarot_payload, dict) else '')
     palm_signals = _palm_signals(palm_features)
@@ -794,6 +863,7 @@ def build_full_reading_payload(
 
     tarot_message = _enrich_tarot_message(tarot_message=tarot_message, tarot_cards=tarot_cards, tarot_spread=tarot_spread, question=question)
     tarot_story = _build_tarot_story(tarot_cards, tarot_spread, question)
+    next_move = _enrich_next_move(next_move, question=question, tarot_cards=tarot_cards)
 
     sections = [
         _build_section(

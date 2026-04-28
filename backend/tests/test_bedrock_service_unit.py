@@ -37,7 +37,7 @@ def test_flow_schema_covers_all_supported_flows() -> None:
     service = _service_without_client()
     expected_lengths = {
         "combined": 7,
-        "tarot_solo": 5,
+        "tarot_solo": 7,
         "palm_solo": 5,
         "sun_moon_solo": 5,
         "daily_horoscope": 4,
@@ -48,20 +48,21 @@ def test_flow_schema_covers_all_supported_flows() -> None:
     for flow, expected_length in expected_lengths.items():
         schema = service._flow_reading_schema(flow)
         assert len(schema) == expected_length
-        assert schema[0]["id"] == "opening_invocation"
+        expected_first_id = "spread_overview" if flow == "tarot_solo" else "opening_invocation"
+        assert schema[0]["id"] == expected_first_id
         assert schema[-1]["id"] == "closing_prompt"
 
 
 def test_parse_sections_by_schema_extracts_deep_insight() -> None:
     service = _service_without_client()
     schema = service._flow_reading_schema("tarot_solo")
-    text = """---OPENING---
+    text = """---SPREAD_OVERVIEW---
 Start here.
 DEEP_INSIGHT: Extra detail one.
----TAROT_FOUNDATION---
+---CARD_1---
 Card thread.
 DEEP_INSIGHT: Extra detail two.
----PATTERN_SYNTHESIS---
+---SPREAD_STORY---
 Synthesis line.
 ---GUIDANCE---
 Practical guidance.
@@ -71,10 +72,10 @@ One question."""
     parsed = service._parse_sections_by_schema(text, schema)
 
     assert len(parsed) == 5
-    assert parsed[0]["id"] == "opening_invocation"
+    assert parsed[0]["id"] == "spread_overview"
     assert parsed[0]["text"] == "Start here."
     assert parsed[0]["deep_text"] == "Extra detail one."
-    assert parsed[1]["id"] == "tarot_narrative"
+    assert parsed[1]["id"] == "card_1"
     assert parsed[1]["deep_text"] == "Extra detail two."
     assert parsed[-1]["id"] == "closing_prompt"
 

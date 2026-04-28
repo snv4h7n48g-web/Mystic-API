@@ -94,6 +94,25 @@ def test_parse_normalized_output_rejects_missing_keys() -> None:
         raise AssertionError("Expected GenerationParseError")
 
 
+def test_parse_normalized_output_accepts_product_specific_section_aliases() -> None:
+    output = parse_normalized_output(
+        """
+        {
+          "overview": "The room needs a calmer command point.",
+          "bagua_map": "The east wall is carrying the main growth pressure.",
+          "energy_flow": "The current flow scatters attention before it settles.",
+          "priority_actions": "Move the chair, clear the entry line, and add one grounded focal point.",
+          "theme_tags": ["feng_shui", "focus"]
+        }
+        """
+    )
+
+    assert output.opening_hook == "The room needs a calmer command point."
+    assert output.current_pattern == "The east wall is carrying the main growth pressure."
+    assert output.emotional_truth == "The current flow scatters attention before it settles."
+    assert "Move the chair" in output.practical_guidance
+
+
 def test_choose_persona_routes_feng_shui_to_practical_astrologer() -> None:
     persona = choose_persona(
         GenerationContext(

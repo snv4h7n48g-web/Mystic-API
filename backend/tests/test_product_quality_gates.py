@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from generation.orchestration import MysticGenerationOrchestrator
 from generation.types import GenerationContext, GenerationMetadata, OrchestrationResult
+from generation.validators import RETRY_HINTS
 
 
 class StubOrchestrator(MysticGenerationOrchestrator):
@@ -73,7 +74,7 @@ def test_quality_gate_retries_once_then_passes() -> None:
         payload_builder_kwargs={},
     )
 
-    assert orchestrator.calls == [None, "Correct the output into a card-led tarot reading. Name the actual cards, card positions, or spread logic; tie each claim back to that card/spread evidence; deepen the tarot narrative instead of restating the summary; stop repeating phrasing across opening, narrative, synthesis, and guidance; and make the guidance concrete, specific, and actionable rather than abstract filler."]
+    assert orchestrator.calls == [None, RETRY_HINTS["tarot"]]
     assert result.payload["metadata"]["validation"]["attempts"] == 2
     assert result.payload["metadata"]["validation"]["valid"] is True
     assert result.input_tokens == 20

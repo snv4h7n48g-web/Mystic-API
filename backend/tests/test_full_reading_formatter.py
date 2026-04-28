@@ -329,6 +329,42 @@ def test_build_full_reading_payload_keeps_single_sentence_headlines_non_duplicat
     assert astro_section['headline'].startswith('Your Libra rising and Capricorn Moon make you look steadier than you feel')
 
 
+def test_build_full_reading_payload_enriches_sparse_tarot_cards_and_next_move() -> None:
+    payload = build_full_reading_payload(
+        normalized=NormalizedMysticOutput(
+            opening_hook='A threshold is here.',
+            current_pattern='The question is already active.',
+            emotional_truth='The deeper pressure is clarity without motion.',
+            reading_opening='A threshold is here. This reading is trying to turn hesitation into something readable.',
+            astrological_foundation='Your Virgo Sun and Capricorn Moon make patience look responsible, even after it becomes delay.',
+            tarot_message='The spread is active and already naming the tension.',
+            signals_agree='The pattern is less about missing information and more about stopping the drift.',
+            what_this_is_asking_of_you='Stop treating the right answer like it needs another round of emotional negotiation.',
+            your_next_move='Move with clarity.',
+            next_return_invitation='Return after the first move lands.',
+        ),
+        metadata=_metadata(),
+        question='Should I move forward?',
+        tarot_payload={
+            'spread': 'past / present / guidance',
+            'cards': [
+                {'card': 'Eight of Cups', 'position': 'past'},
+                {'card': 'Seven of Swords', 'position': 'present'},
+                {'card': 'The Hierophant', 'position': 'guidance'},
+            ],
+        },
+    )
+
+    tarot_cards = payload['metadata']['evidence']['tarot']['cards']
+    next_move_section = next(section for section in payload['sections'] if section['id'] == 'your_next_move')
+    next_move_rendered = f"{next_move_section['headline']} {next_move_section['detail']}"
+
+    assert all(card['interpretation'] for card in tarot_cards)
+    assert all(card['question_link'] for card in tarot_cards)
+    assert 'Start by naming the clearest decision you can make about whether you should move forward' in next_move_rendered
+    assert validate_full_reading_payload(payload) == []
+
+
 def test_validate_full_reading_payload_flags_shallow_tarot_and_raw_palm_labels() -> None:
     payload = {
         'sections': [

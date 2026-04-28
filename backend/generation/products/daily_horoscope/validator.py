@@ -28,6 +28,24 @@ _REQUIRED_SECTION_IDS = {
     "timing",
     "closing_guidance",
 }
+_CTA_LEAK_PATTERNS = [
+    r"\bopen the full (?:daily )?reading\b",
+    r"\bopen today'?s full horoscope\b",
+    r"\bconsider exploring a personalized reading\b",
+    r"\bfor a deeper dive\b",
+]
+_TIMING_WORDS = {
+    "morning",
+    "afternoon",
+    "evening",
+    "tonight",
+    "today",
+    "lunch",
+    "late",
+    "early",
+    "hours",
+}
+_SENTENCE_RE = re.compile(r"[^.!?]+[.!?]")
 
 
 def _normalize_text(text: str) -> str:
@@ -36,6 +54,14 @@ def _normalize_text(text: str) -> str:
 
 def _content_tokens(text: str) -> list[str]:
     return [token for token in _WORD_RE.findall((text or "").casefold()) if token not in _STOPWORDS]
+
+
+def _sentence_count(text: str) -> int:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return 0
+    matches = _SENTENCE_RE.findall(cleaned)
+    return len(matches) if matches else 1
 
 
 def _first_content_stem(text: str, size: int = 4) -> str:
@@ -106,11 +132,23 @@ def validate_daily_payload(payload: dict) -> list[str]:
                 issues.append(f"daily_headline_detail_repetition:{section_id}")
         if section_id in _REQUIRED_SECTION_IDS and not detail:
             issues.append(f"daily_missing_section_detail:{section_id}")
+        if detail and len(_content_tokens(detail)) < 24:
+            issues.append(f"daily_section_too_short:{section_id}")
+        if detail and section_id in _REQUIRED_SECTION_IDS and _sentence_count(detail) < 2:
+            issues.append(f"daily_section_needs_more_depth:{section_id}")
+        if section_id == "timing" and detail:
+            timing_tokens = set(_content_tokens(detail))
+            if not (_TIMING_WORDS & timing_tokens):
+                issues.append("daily_timing_not_concrete")
         normalized = _normalize_text(section_text)
         if normalized:
             if normalized in seen_bodies and seen_bodies[normalized] != section_id:
                 issues.append(f"daily_duplicate_section_text:{seen_bodies[normalized]}:{section_id}")
             else:
                 seen_bodies[normalized] = section_id
+        lowered_text = f"{headline} {detail} {section_text}".casefold()
+        for pattern in _CTA_LEAK_PATTERNS:
+            if re.search(pattern, lowered_text):
+                issues.append(f"daily_cta_leak:{section_id}:{pattern}")
 
     return issues

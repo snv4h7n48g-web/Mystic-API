@@ -40,6 +40,10 @@ class NormalizedMysticOutput:
     tarot_message: str = ""
     signals_agree: str = ""
     daily_sections: dict[str, dict[str, str]] = field(default_factory=dict)
+    feng_shui_sections: dict[str, str] = field(default_factory=dict)
+    tarot_spread_overview: str = ""
+    tarot_card_chapters: list[dict[str, str]] = field(default_factory=list)
+    tarot_spread_story: str = ""
 
 
 @dataclass

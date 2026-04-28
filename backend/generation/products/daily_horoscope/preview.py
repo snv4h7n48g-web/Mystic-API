@@ -3,10 +3,19 @@ from __future__ import annotations
 from .mapper import map_daily_preview
 
 
-def build_daily_horoscope_preview_payload(*, normalized, metadata, unlock_price, product_id, entitlements, astrology_facts):
+def build_daily_horoscope_preview_payload(
+    *,
+    normalized,
+    metadata,
+    unlock_price,
+    product_id,
+    entitlements,
+    astrology_facts,
+    tarot_payload,
+):
     mapped = map_daily_preview(normalized)
     return {
-        'teaser_text': mapped['headline'],
+        'teaser_text': mapped['teaser_text'],
         'headline': mapped['headline'],
         'today_energy': mapped['today_energy'],
         'best_move_teaser': mapped['best_move_teaser'],
@@ -16,6 +25,7 @@ def build_daily_horoscope_preview_payload(*, normalized, metadata, unlock_price,
         'product_id': product_id,
         'entitlements': entitlements,
         'astrology_facts': astrology_facts,
+        'tarot': tarot_payload,
         'flow_type': 'daily_horoscope',
         'metadata': {
             'persona_id': metadata.persona_id,

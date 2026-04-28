@@ -20,7 +20,7 @@ _CARD_MARKERS = [
 ]
 _PALM_MARKERS = ['palm', 'life line', 'heart line', 'head line', 'fate line', 'mount', 'thumb', 'finger', 'hand shape', 'texture']
 _TAROT_STRUCTURE_MARKERS = ['card', 'cards', 'spread', 'position', 'together', 'interaction', 'interact', 'crossing', 'present', 'past', 'future']
-_ACTION_MARKERS = ['choose', 'send', 'ask', 'name', 'make', 'begin', 'start', 'stop', 'schedule', 'say', 'write', 'set', 'clear']
+_ACTION_MARKERS = ['choose', 'send', 'ask', 'name', 'make', 'begin', 'start', 'stop', 'schedule', 'say', 'write', 'set', 'clear', 'take']
 
 
 def _text_for(sections: list[dict], *ids: str) -> str:

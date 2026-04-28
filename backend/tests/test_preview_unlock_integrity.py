@@ -77,6 +77,35 @@ def test_session_purchase_rejects_paid_preview_without_product_contract(monkeypa
     assert response.json()["detail"] == "Preview contract is invalid for paid unlock"
 
 
+def test_session_purchase_rejects_subscription_product(monkeypatch) -> None:
+    user = _auth_user()
+    session = {
+        "id": "sess-sub",
+        "user_id": user["id"],
+        "purchased_products": [],
+        "inputs": {"flow_type": "daily_horoscope", "question_intention": "Today?", "birth_date": "1990-01-01"},
+        "preview": {
+            "product_id": ProductSKU.DAILY_ASTRO_TAROT,
+            "unlock_price": {"currency": "USD", "amount": 9.99},
+        },
+    }
+
+    monkeypatch.setattr(main, "db_get_session", lambda session_id: session)
+    monkeypatch.setattr(main, "_assert_session_access", lambda session_id, user: None)
+    main.app.dependency_overrides[main.get_current_user_optional] = lambda: user
+    client = TestClient(main.app)
+    try:
+        response = client.post(
+            "/v1/sessions/sess-sub/purchase",
+            json={"product_id": ProductSKU.DAILY_ASTRO_TAROT, "transaction_id": "tx-sub"},
+        )
+    finally:
+        main.app.dependency_overrides.clear()
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Use /v1/subscription/activate for subscription purchases"
+
+
 def test_session_purchase_allows_matching_preview_contract(monkeypatch) -> None:
     user = _auth_user()
     session = {

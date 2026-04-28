@@ -61,6 +61,15 @@ def _goals_label(analysis: dict[str, Any]) -> str:
     return _clean(analysis.get("user_goals"))
 
 
+def _section_value(normalized, *keys: str) -> str:
+    sections = getattr(normalized, "feng_shui_sections", {}) or {}
+    for key in keys:
+        value = _clean(sections.get(key))
+        if value:
+            return value
+    return ""
+
+
 def _overview_fallback(analysis: dict[str, Any]) -> str:
     room = _room_label(analysis)
     goals = _goals_label(analysis)
@@ -73,61 +82,61 @@ def _overview_fallback(analysis: dict[str, Any]) -> str:
     )
 
 
-def _bagua_fallback(analysis: dict[str, Any]) -> str:
+def _what_helps_fallback(analysis: dict[str, Any]) -> str:
     room = _room_label(analysis)
     direction = _direction_label(analysis)
     goals = _goals_label(analysis)
-    direction_sentence = (
-        f"The directional emphasis is {direction}, so placement, sightlines, and what occupies that side of the {room} matter more than surface styling."
+    direction_line = (
+        f"The {direction} emphasis can help this {room} when that side is kept clear, intentional, and connected to the room's main purpose."
         if direction
-        else f"Bagua pressure in this {room} is less about decoration than about whether the most important parts of the layout are supported or obstructed."
+        else f"The strongest support in this {room} will come from anything that makes the room's purpose obvious as soon as someone enters."
     )
-    goal_sentence = (
-        f"Because the room is being asked to support {goals}, the strongest symbolic read comes from whether the layout reinforces that goal or keeps splitting attention away from it."
+    goal_line = (
+        f"Because the space is being asked to support {goals}, protect the zones that already feel steady, visible, and easy to use."
         if goals
-        else "The key symbolic question is whether the layout reinforces the room's purpose or quietly drains it."
+        else "Keep the pieces that create calm sightlines, easy circulation, and a clear place for the eye to rest."
     )
-    return _paragraphs(direction_sentence, goal_sentence)
-
-
-def _energy_fallback(analysis: dict[str, Any]) -> str:
-    room = _room_label(analysis)
     return _paragraphs(
-        f"Energy flow in this {room} should feel guided, not crowded: paths need to be legible, anchor points need breathing room, and the eye should know where to settle first.",
-        "When a room holds too many competing signals at once, chi tends to fragment into low-grade friction rather than steady support.",
+        direction_line,
+        goal_line,
+        "Those strengths matter because Feng Shui works best when the useful parts of a room are amplified before new cures are added.",
     )
 
 
-def _priority_fallback(analysis: dict[str, Any]) -> str:
+def _what_blocks_fallback(analysis: dict[str, Any]) -> str:
+    room = _room_label(analysis)
+    direction = _direction_label(analysis)
+    direction_phrase = f" near the {direction} emphasis" if direction else ""
+    return _paragraphs(
+        f"The main block to watch in this {room} is fragmented attention: too many visual anchors, unclear pathways, or crowded surfaces{direction_phrase} can make the room feel busy before it feels supportive.",
+        "When circulation, focal points, and storage are all competing, chi turns into small hesitation points: the body pauses, the eye bounces, and the room asks for effort instead of giving support.",
+    )
+
+
+def _practical_fixes_fallback(analysis: dict[str, Any]) -> str:
     room = _room_label(analysis)
     direction = _direction_label(analysis)
     target = f" on the {direction} side" if direction else ""
     return _paragraphs(
-        f"1. Clear one obvious obstruction{target} so the {room} has a cleaner entry point for attention and movement.",
-        f"2. Choose one focal zone in the {room} and make it visually stable instead of letting several competing objects lead the eye.",
-        "3. Remove or relocate anything that creates visual noise near the main circulation path, because flow improves fastest when the room stops making the body hesitate.",
+        f"1. Clear one obvious obstruction{target} so the {room} has a cleaner entry point for attention and movement; this improves flow before any decorative cure is needed.",
+        f"2. Anchor one focal zone in the {room} with the strongest piece already present, then remove nearby items that compete with it; the room should know what it is organised around.",
+        "3. Open the main circulation path by shifting furniture, baskets, side tables, or trailing objects out of the body's natural route; chi follows the path people actually use.",
+        "4. Add one balancing cue only after clearing: warmer light, a living plant, a calmer textile, or one meaningful object that reinforces the goal instead of adding more noise.",
     )
 
 
-def _recommendations_fallback(analysis: dict[str, Any]) -> str:
-    goals = _goals_label(analysis)
-    goal_line = (
-        f"Treat every adjustment as a test of whether the room is helping {goals} become easier to sustain."
-        if goals
-        else "Treat each adjustment as a test of whether the room feels easier to inhabit and easier to use well."
-    )
-    return _paragraphs(
-        goal_line,
-        "Favor changes that improve placement, circulation, and visual calm before adding more symbolic cures or decorative fixes.",
-        "The most effective Feng Shui recommendation is usually the one that removes confusion from the room first and only then adds support.",
-    )
-
-
-def _guidance_fallback(analysis: dict[str, Any]) -> str:
+def _action_plan_fallback(analysis: dict[str, Any]) -> str:
     room = _room_label(analysis)
+    goals = _goals_label(analysis)
+    goal_clause = (
+        f" and whether the room makes {goals} easier to sustain"
+        if goals
+        else ""
+    )
     return _paragraphs(
-        f"Return to this {room} after the first round of changes and notice whether your body relaxes, focuses, or keeps bracing in the same places.",
-        "A good Feng Shui adjustment should feel measurable in how the room moves, not just in how it photographs.",
+        f"Start with the one change that clears movement through the {room}; if the path feels easier, every later adjustment will read more clearly.",
+        "Next, stabilise the focal zone and remove the object that creates the most visual static. Do not add new decor until the room has stopped scattering attention.",
+        f"After 24 hours, return and notice whether your body settles faster on entry{goal_clause}. That felt response is the best early measure of whether the Feng Shui adjustment is working.",
     )
 
 
@@ -156,13 +165,13 @@ def map_feng_shui_preview(normalized, analysis: dict[str, Any] | None = None) ->
         used,
         getattr(normalized, "current_pattern", ""),
         getattr(normalized, "emotional_truth", ""),
-        _energy_fallback(analysis),
+        _what_blocks_fallback(analysis),
     )
     actions = _pick(
         used,
         getattr(normalized, "practical_guidance", ""),
         getattr(normalized, "your_next_move", ""),
-        _priority_fallback(analysis),
+        _practical_fixes_fallback(analysis),
     )
     teaser = _dedupe_join(overview, energy, actions)
     return {
@@ -183,89 +192,86 @@ def map_feng_shui_analysis(
 
     overview = _pick(
         used,
+        _section_value(normalized, "overview"),
         getattr(normalized, "reading_opening", ""),
         getattr(normalized, "opening_hook", ""),
         _overview_fallback(analysis),
     )
-    bagua = _pick(
+    what_helps = _pick(
         used,
+        _section_value(normalized, "what_helps", "bagua_map"),
         getattr(normalized, "current_pattern", ""),
         getattr(normalized, "snapshot_core_theme", ""),
-        _bagua_fallback(analysis),
+        _what_helps_fallback(analysis),
     )
-    energy = _pick(
+    what_blocks = _pick(
         used,
+        _section_value(normalized, "what_blocks", "energy_flow"),
         getattr(normalized, "emotional_truth", ""),
         getattr(normalized, "continuity_callback", ""),
         getattr(normalized, "snapshot_main_tension", ""),
-        _energy_fallback(analysis),
+        _what_blocks_fallback(analysis),
     )
-    priority = _pick(
+    practical_fixes = _pick(
         used,
+        _section_value(normalized, "practical_fixes", "priority_actions", "recommendations"),
         getattr(normalized, "practical_guidance", ""),
         getattr(normalized, "your_next_move", ""),
         getattr(normalized, "snapshot_best_next_move", ""),
-        _priority_fallback(analysis),
+        _practical_fixes_fallback(analysis),
     )
-    recommendations = _pick(
+    action_plan = _pick(
         used,
+        _section_value(normalized, "action_plan", "guidance"),
         getattr(normalized, "what_this_is_asking_of_you", ""),
-        getattr(normalized, "premium_teaser", ""),
-        getattr(normalized, "practical_guidance", ""),
-        _recommendations_fallback(analysis),
-    )
-    guidance = _pick(
-        used,
+        getattr(normalized, "your_next_move", ""),
         getattr(normalized, "next_return_invitation", ""),
-        getattr(normalized, "premium_teaser", ""),
-        _guidance_fallback(analysis),
+        _action_plan_fallback(analysis),
     )
 
     return {
         "overview": _section_text(
             overview,
             _dedupe_join(
+                _section_value(normalized, "overview"),
                 getattr(normalized, "reading_opening", ""),
                 getattr(normalized, "opening_hook", ""),
                 _overview_fallback(analysis),
             ),
         ),
-        "bagua_map": _section_text(
-            bagua,
+        "what_helps": _section_text(
+            what_helps,
             _dedupe_join(
+                _section_value(normalized, "what_helps", "bagua_map"),
                 getattr(normalized, "current_pattern", ""),
-                _bagua_fallback(analysis),
+                _what_helps_fallback(analysis),
             ),
         ),
-        "energy_flow": _section_text(
-            energy,
+        "what_blocks": _section_text(
+            what_blocks,
             _dedupe_join(
+                _section_value(normalized, "what_blocks", "energy_flow"),
                 getattr(normalized, "emotional_truth", ""),
                 getattr(normalized, "continuity_callback", ""),
-                _energy_fallback(analysis),
+                _what_blocks_fallback(analysis),
             ),
         ),
-        "priority_actions": _section_text(
-            priority,
+        "practical_fixes": _section_text(
+            practical_fixes,
             _dedupe_join(
+                _section_value(normalized, "practical_fixes", "priority_actions", "recommendations"),
                 getattr(normalized, "practical_guidance", ""),
                 getattr(normalized, "your_next_move", ""),
-                _priority_fallback(analysis),
+                _practical_fixes_fallback(analysis),
             ),
         ),
-        "recommendations": _section_text(
-            recommendations,
+        "action_plan": _section_text(
+            action_plan,
             _dedupe_join(
+                _section_value(normalized, "action_plan", "guidance"),
                 getattr(normalized, "what_this_is_asking_of_you", ""),
-                getattr(normalized, "premium_teaser", ""),
-                _recommendations_fallback(analysis),
-            ),
-        ),
-        "guidance": _section_text(
-            guidance,
-            _dedupe_join(
                 getattr(normalized, "next_return_invitation", ""),
-                _guidance_fallback(analysis),
+                _action_plan_fallback(analysis),
             ),
         ),
     }

@@ -16,14 +16,26 @@ SPACE_MARKERS = [
     "direction",
 ]
 ACTION_MARKERS = ["move", "place", "clear", "adjust", "add", "remove", "shift", "keep"]
+FIX_ACTION_MARKERS = [
+    "move",
+    "place",
+    "clear",
+    "adjust",
+    "add",
+    "remove",
+    "shift",
+    "open",
+    "anchor",
+    "soften",
+    "relocate",
+]
 DRIFT_MARKERS = ["your heart", "your soul", "tarot", "birth chart", "spread"]
 EXPECTED_SECTION_IDS = {
     "overview",
-    "bagua_map",
-    "energy_flow",
-    "priority_actions",
-    "recommendations",
-    "guidance",
+    "what_helps",
+    "what_blocks",
+    "practical_fixes",
+    "action_plan",
 }
 GENERIC_SECTION_IDS = {
     "opening_hook",
@@ -33,6 +45,20 @@ GENERIC_SECTION_IDS = {
     "next_return_invitation",
     "continuity_callback",
 }
+
+
+def _word_count(text: str) -> int:
+    return len([word for word in text.split() if word.strip()])
+
+
+def _section_text(sections: list[dict], section_id: str) -> str:
+    section = next((item for item in sections if item.get("id") == section_id), None)
+    return str((section or {}).get("text") or "").strip()
+
+
+def _action_marker_count(text: str) -> int:
+    lowered = text.casefold()
+    return sum(1 for marker in FIX_ACTION_MARKERS if marker in lowered)
 
 
 def validate_feng_shui_payload(payload: dict) -> list[str]:
@@ -51,10 +77,16 @@ def validate_feng_shui_payload(payload: dict) -> list[str]:
         issues.append("feng_shui_missing_recommendation_language")
     if any(marker in lowered for marker in DRIFT_MARKERS):
         issues.append("feng_shui_generic_reading_drift")
-    priority_section = next((section for section in sections if section.get("id") == "priority_actions"), None)
-    recommendations_section = next((section for section in sections if section.get("id") == "recommendations"), None)
-    if not priority_section or not str(priority_section.get("text") or "").strip():
-        issues.append("feng_shui_missing_priority_actions")
-    if not recommendations_section or not str(recommendations_section.get("text") or "").strip():
-        issues.append("feng_shui_missing_recommendations")
+    for section_id in EXPECTED_SECTION_IDS:
+        text_value = _section_text(sections, section_id)
+        if not text_value:
+            issues.append(f"feng_shui_missing_section:{section_id}")
+        elif _word_count(text_value) < 28:
+            issues.append(f"feng_shui_shallow_section:{section_id}")
+    practical_fixes = _section_text(sections, "practical_fixes")
+    action_plan = _section_text(sections, "action_plan")
+    if _action_marker_count(practical_fixes) < 3:
+        issues.append("feng_shui_practical_fixes_not_actionable")
+    if _word_count(action_plan) < 35:
+        issues.append("feng_shui_action_plan_too_thin")
     return issues
