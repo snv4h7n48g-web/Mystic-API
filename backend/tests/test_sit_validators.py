@@ -43,6 +43,30 @@ def test_combined_preview_validator_accepts_valid_full_reading_payload() -> None
     assert "product_validator_passed" in result.checks
 
 
+def test_combined_preview_validator_accepts_generic_preview_envelope_without_full_sections() -> None:
+    payload = {
+        "flow_type": "combined",
+        "astrology_facts": {"sun_sign": "Aries"},
+        "tarot": {"cards": [{"card": "The Fool"}]},
+        "teaser_text": "A clear pattern is taking shape.",
+        "unlock_price": {"currency": "USD", "amount": 2.99},
+        "product_id": "reading_complete",
+        "meta": {
+            "persona_id": "premium_mystic",
+            "llm_profile_id": "preview_mystic",
+            "prompt_version": "mystic-v3",
+            "theme_tags": ["clarity"],
+            "headline": "A clear pattern is taking shape.",
+        },
+    }
+
+    result = validate_preview_payload(case_id="combined_preview", product_key="full_reading", payload=payload)
+
+    assert result.status == "passed"
+    assert "full_reading_product_validator_skipped_for_generic_preview_envelope" in result.checks
+    assert result.validator["issues"] == []
+
+
 def test_combined_preview_validator_fails_on_structural_product_issues() -> None:
     payload = {
         "flow_type": "combined",

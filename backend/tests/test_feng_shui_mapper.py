@@ -1,4 +1,5 @@
 from generation.products.feng_shui.mapper import map_feng_shui_analysis
+from generation.products.feng_shui.reading import repair_feng_shui_analysis_payload
 from generation.types import NormalizedMysticOutput
 
 
@@ -64,6 +65,73 @@ def test_feng_shui_mapper_prefers_explicit_action_led_sections() -> None:
     assert "blocked path" in mapped["what_blocks"]
     assert "spare chair" in mapped["practical_fixes"]
     assert "doorway path" in mapped["action_plan"]
+
+
+def test_feng_shui_mapper_keeps_explicit_fixes_separate_and_readable() -> None:
+    normalized = NormalizedMysticOutput(
+        opening_hook="Generic opening.",
+        current_pattern="Generic pattern.",
+        emotional_truth="Generic block.",
+        practical_guidance="Start by opening the centre, then add water, then activate the wealth corner.",
+        your_next_move="Clear one obvious obstruction so the lounge room has a cleaner entry point.",
+        next_return_invitation="Generic return.",
+        theme_tags=["feng_shui"],
+        feng_shui_sections={
+            "overview": "The lounge has enough support but needs a cleaner centre before the eye can rest.",
+            "what_helps": "The window side gives the room brightness and should stay clear.",
+            "what_blocks": "The central seating path is too tight and makes movement feel hesitant.",
+            "practical_fixes": "1. Rearrange the couches to open the centre. 2. Add a small water feature to the north side. 3. Place a healthy plant in the wealth corner.",
+            "action_plan": "First, open the centre. Second, add water. Third, observe the room for a week.",
+        },
+    )
+
+    mapped = map_feng_shui_analysis(
+        normalized,
+        analysis={
+            "analysis_type": "single_room",
+            "room_purpose": "lounge",
+            "user_goals": "wealth",
+            "compass_direction": "north",
+        },
+    )
+
+    assert mapped["practical_fixes"].startswith("Focus on these practical fixes.")
+    assert "\n\n1. Rearrange the couches" in mapped["practical_fixes"]
+    assert "\n\n2. Add a small water feature" in mapped["practical_fixes"]
+    assert "Start by opening the centre" not in mapped["practical_fixes"]
+    assert "Clear one obvious obstruction" not in mapped["practical_fixes"]
+
+
+def test_feng_shui_cached_payload_repair_cleans_practical_fixes_blob() -> None:
+    payload = {
+        "sections": [
+            {
+                "id": "practical_fixes",
+                "text": (
+                    "1. Rearrange the couches to open the centre. "
+                    "2. Add a small water feature to the north side. "
+                    "3. Place a healthy plant in the wealth corner. "
+                    "Start by opening the centre, then add water, then activate the wealth corner. "
+                    "1. Clear one obvious obstruction so the room has a cleaner entry point."
+                ),
+            },
+            {
+                "id": "action_plan",
+                "text": "1. Open the centre. 2. Add water. 3. Observe the room for a week.",
+            },
+        ],
+    }
+
+    repaired, changed = repair_feng_shui_analysis_payload(payload)
+    fixes = repaired["sections"][0]["text"]
+    plan = repaired["sections"][1]["text"]
+
+    assert changed is True
+    assert fixes.startswith("Focus on these practical fixes.")
+    assert "\n\n1. Rearrange the couches" in fixes
+    assert "Start by opening" not in fixes
+    assert "Clear one obvious obstruction" not in fixes
+    assert plan.startswith("Move through the space in this order.")
 
 
 def test_feng_shui_mapper_backfills_missing_practical_guidance_from_room_context() -> None:

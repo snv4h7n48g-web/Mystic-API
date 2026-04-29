@@ -57,6 +57,38 @@ def test_palm_flow_content_contract_is_supported() -> None:
     }
 
 
+def test_palm_upload_url_resets_stale_palm_outputs(monkeypatch) -> None:
+    updates = {}
+
+    class FakeS3Service:
+        def generate_presigned_upload_url(self, *, session_id, content_type):
+            assert session_id == "session-1"
+            assert content_type == "image/jpeg"
+            return {
+                "upload_url": "https://upload.example",
+                "upload_fields": {"key": "palms/session-1/new.jpg"},
+                "object_key": "palms/session-1/new.jpg",
+                "expires_in": 300,
+            }
+
+    monkeypatch.setattr(main, "db_get_session", lambda session_id: {"id": session_id})
+    monkeypatch.setattr(main, "db_get_session_owner_id", lambda session_id: None)
+    monkeypatch.setattr(main, "get_s3_service", lambda: FakeS3Service())
+    monkeypatch.setattr(main, "db_update_session", lambda session_id, **fields: updates.update(fields))
+
+    response = main.get_palm_upload_url("session-1", content_type="image/jpeg", user=None)
+
+    assert response["upload_url"] == "https://upload.example"
+    assert updates == {
+        "palm_image_url": "palms/session-1/new.jpg",
+        "palm_analysis": None,
+        "palm_cost_usd": None,
+        "preview": None,
+        "reading": None,
+        "status": "draft",
+    }
+
+
 
 def test_sun_moon_flow_maps_to_basic_unlock_product() -> None:
     session = {

@@ -1,6 +1,6 @@
 """
-AWS Bedrock service for Nova LLM integration.
-Handles preview and full reading generation with cost tracking.
+AWS Bedrock service for Mystic LLM integration.
+Handles generation calls, structured output, latency, and cost tracking.
 """
 
 import logging
@@ -20,7 +20,7 @@ logger = get_logger("bedrock_service")
 
 
 class BedrockService:
-    """Service for interacting with AWS Bedrock Nova models."""
+    """Service for interacting with AWS Bedrock text and vision models."""
 
     def __init__(self):
         """Initialize Bedrock client with IAM roles in prod and explicit creds only in non-prod."""
@@ -38,6 +38,12 @@ class BedrockService:
         self.costs = {
             'us.amazon.nova-lite-v1:0': {'input': 0.00006, 'output': 0.00024},
             'us.amazon.nova-pro-v1:0': {'input': 0.0008, 'output': 0.0032},
+            'anthropic.claude-opus-4-1-20250805-v1:0': {'input': 0.015, 'output': 0.075},
+            'us.anthropic.claude-opus-4-1-20250805-v1:0': {'input': 0.015, 'output': 0.075},
+            'global.anthropic.claude-opus-4-1-20250805-v1:0': {'input': 0.015, 'output': 0.075},
+            'anthropic.claude-opus-4-5-20251101-v1:0': {'input': 0.005, 'output': 0.025},
+            'us.anthropic.claude-opus-4-5-20251101-v1:0': {'input': 0.005, 'output': 0.025},
+            'global.anthropic.claude-opus-4-5-20251101-v1:0': {'input': 0.005, 'output': 0.025},
         }
 
     def _client_for_timeout(self, timeout_ms: Optional[int]):
@@ -80,6 +86,31 @@ class BedrockService:
             }
             for message in user_messages
         ]
+
+    def _extract_output_text(
+        self,
+        response: Dict[str, Any],
+        *,
+        structured_tool_name: Optional[str] = None,
+    ) -> str:
+        content = response.get("output", {}).get("message", {}).get("content", [])
+        if structured_tool_name:
+            for block in content:
+                tool_use = block.get("toolUse") if isinstance(block, dict) else None
+                if not isinstance(tool_use, dict):
+                    continue
+                if tool_use.get("name") != structured_tool_name:
+                    continue
+                tool_input = tool_use.get("input")
+                if not isinstance(tool_input, dict):
+                    raise RuntimeError("Structured Bedrock tool output was not a JSON object")
+                return json.dumps(tool_input, separators=(",", ":"), ensure_ascii=False)
+            raise RuntimeError("Structured Bedrock tool output was missing")
+
+        for block in content:
+            if isinstance(block, dict) and isinstance(block.get("text"), str):
+                return block["text"]
+        raise RuntimeError("Bedrock text output was missing")
 
     def _calculate_cost(
         self,
@@ -158,6 +189,8 @@ class BedrockService:
         top_p: float,
         max_tokens: int,
         timeout_ms: Optional[int] = None,
+        structured_schema: Optional[Dict[str, Any]] = None,
+        structured_tool_name: str = "mystic_output",
     ) -> Dict[str, Any]:
         messages = self._build_message_list(user_messages)
         inference_config: Dict[str, Any] = {
@@ -174,13 +207,44 @@ class BedrockService:
         client = self._client_for_timeout(timeout_ms)
         started = time.perf_counter()
         try:
-            response = client.converse(
-                modelId=model_id,
-                messages=messages,
-                system=[{"text": system_prompt}],
-                inferenceConfig=inference_config,
+            request: Dict[str, Any] = {
+                "modelId": model_id,
+                "messages": messages,
+                "system": [{"text": system_prompt}],
+                "inferenceConfig": inference_config,
+            }
+            structured_output_mode = os.getenv("MYSTIC_STRUCTURED_OUTPUT_MODE", "json_schema").strip().lower()
+            if structured_schema and structured_output_mode == "json_schema":
+                request["outputConfig"] = {
+                    "textFormat": {
+                        "type": "json_schema",
+                        "structure": {
+                            "jsonSchema": {
+                                "name": structured_tool_name,
+                                "description": "Return the complete Mystic reading payload as structured JSON.",
+                                "schema": json.dumps(structured_schema, separators=(",", ":"), ensure_ascii=False),
+                            }
+                        },
+                    }
+                }
+            elif structured_schema:
+                request["toolConfig"] = {
+                    "tools": [
+                        {
+                            "toolSpec": {
+                                "name": structured_tool_name,
+                                "description": "Return the complete Mystic reading payload as structured JSON.",
+                                "inputSchema": {"json": structured_schema},
+                            }
+                        }
+                    ],
+                    "toolChoice": {"tool": {"name": structured_tool_name}},
+                }
+            response = client.converse(**request)
+            output_text = self._extract_output_text(
+                response,
+                structured_tool_name=structured_tool_name if structured_schema and structured_output_mode == "tool" else None,
             )
-            output_text = response['output']['message']['content'][0]['text']
             usage = response.get('usage', {})
             input_tokens = usage.get('inputTokens', 0)
             output_tokens = usage.get('outputTokens', 0)

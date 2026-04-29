@@ -4,6 +4,13 @@ import os
 from typing import Any
 from urllib.parse import quote_plus
 
+DEFAULT_PREMIUM_BEDROCK_TEXT_MODEL = "global.anthropic.claude-opus-4-5-20251101-v1:0"
+PREMIUM_BEDROCK_MODEL_PREFIXES = (
+    "anthropic.claude-opus",
+    "us.anthropic.claude-opus",
+    "global.anthropic.claude-opus",
+)
+
 
 def env(name: str, default: str = "") -> str:
     value = os.getenv(name, "").strip()
@@ -16,6 +23,10 @@ def app_env() -> str:
 
 def is_production() -> bool:
     return app_env() == "production"
+
+
+def is_release_like() -> bool:
+    return app_env() in {"uat", "staging", "production"}
 
 
 def aws_region() -> str:
@@ -41,9 +52,9 @@ def aws_client_kwargs(service_name: str) -> dict[str, Any]:
             "Explicit AWS credentials require both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY"
         )
 
-    if is_production():
+    if is_release_like():
         raise RuntimeError(
-            "Static AWS credentials are not allowed when APP_ENV=production. Use IAM task roles instead."
+            "Static AWS credentials are not allowed when APP_ENV is uat, staging, or production. Use IAM task roles instead."
         )
 
     kwargs["aws_access_key_id"] = access_key
@@ -92,7 +103,10 @@ def database_url(
 
 
 def effective_claude_opus_model() -> str:
-    return env("BEDROCK_MODEL_CLAUDE_OPUS", env("BEDROCK_FULL_MODEL", "us.amazon.nova-pro-v1:0"))
+    return env(
+        "BEDROCK_MODEL_CLAUDE_OPUS",
+        env("MYSTIC_PREMIUM_TEXT_MODEL", DEFAULT_PREMIUM_BEDROCK_TEXT_MODEL),
+    )
 
 
 def effective_persona_profile_models() -> dict[str, str]:
@@ -103,3 +117,50 @@ def effective_persona_profile_models() -> dict[str, str]:
         "daily_retention": env("MYSTIC_LLM_PROFILE_DAILY_MODEL", fallback),
         "grounded_clarity": env("MYSTIC_LLM_PROFILE_GROUNDED_MODEL", fallback),
     }
+
+
+def is_premium_text_model(model_id: str) -> bool:
+    normalized = (model_id or "").strip()
+    return normalized.startswith(PREMIUM_BEDROCK_MODEL_PREFIXES)
+
+
+def llm_configuration_issues() -> list[str]:
+    issues: list[str] = []
+    persona_enabled = env("MYSTIC_USE_PERSONA_ORCHESTRATION", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not persona_enabled:
+        issues.append("persona_orchestration_disabled")
+
+    profile_models = effective_persona_profile_models()
+    for profile_id, model_id in profile_models.items():
+        if not is_premium_text_model(model_id):
+            issues.append(f"profile_not_premium:{profile_id}:{model_id}")
+
+    if is_release_like():
+        hard_fail = env("MYSTIC_HARD_FAIL_QUALITY_GATES", "true").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if not hard_fail:
+            issues.append("quality_gates_not_hard_fail")
+        if env("AWS_ACCESS_KEY_ID") or env("AWS_SECRET_ACCESS_KEY") or env("AWS_SESSION_TOKEN"):
+            issues.append("static_aws_credentials_configured")
+        jwt_secret = env("JWT_SECRET_KEY")
+        if not jwt_secret or jwt_secret.startswith("your_") or len(jwt_secret) < 32:
+            issues.append("jwt_secret_not_release_ready")
+        dev_purchase_bypass = env("ALLOW_DEV_PURCHASE_BYPASS", "false").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if dev_purchase_bypass:
+            issues.append("dev_purchase_bypass_enabled")
+
+    return issues

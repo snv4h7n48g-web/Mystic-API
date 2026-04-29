@@ -157,6 +157,53 @@ def test_build_full_reading_payload_humanizes_palm_signals_and_rich_tarot_eviden
     assert tarot_card['question_link'] == 'It shows the path is ready to move if you claim it.'
 
 
+def test_build_full_reading_payload_does_not_append_template_tarot_when_model_already_interprets_spread() -> None:
+    tarot_message = (
+        "This card reversed often points to a time when choices about relationships or identity were made under pressure, "
+        "or when harmony came at a cost. It may be that your deep investment in Finn's social inclusion is partly shaped "
+        "by something you once lacked or lost. The Ace of Pentacles reversed in the Present position is striking. Aces are "
+        "seeds, and Pentacles are the material world - health, security, tangible results. Reversed, this card suggests "
+        "that the new beginning you are hoping for feels blocked or delayed. This is not a warning of failure; it is a "
+        "reflection of timing. The Ten of Wands upright in the Guidance position is the heart of this spread. This card "
+        "shows a figure carrying an enormous burden, nearly overwhelmed but still moving forward. As guidance, it does "
+        "not tell you to drop everything - it tells you to notice what you are carrying that is not yours to carry."
+    )
+    payload = build_full_reading_payload(
+        normalized=NormalizedMysticOutput(
+            opening_hook='A tender question is active.',
+            current_pattern='You are trying to hold love and uncertainty at the same time.',
+            emotional_truth='The pressure is care becoming responsibility for an outcome you cannot fully control.',
+            reading_opening='A tender question is active.',
+            tarot_message=tarot_message,
+            signals_agree='The cards keep pointing to care without over-carrying.',
+            what_this_is_asking_of_you='Stay available without making yourself responsible for every future result.',
+            your_next_move='Name the support that is actually yours to offer this week.',
+            next_return_invitation='Return when the next concrete social step has happened.',
+        ),
+        metadata=_metadata(),
+        question='Will Finn grow up to be a happy socially included, well rounded individual?',
+        tarot_payload={
+            'spread': 'past / present / guidance',
+            'cards': [
+                {'card': 'The Lovers', 'position': 'Past', 'orientation': 'reversed'},
+                {'card': 'Ace of Pentacles', 'position': 'Present', 'orientation': 'reversed'},
+                {'card': 'Ten of Wands', 'position': 'Guidance', 'orientation': 'upright'},
+            ],
+        },
+    )
+
+    tarot_section = next(section for section in payload['sections'] if section['id'] == 'tarot_message')
+    tarot_rendered = f"{tarot_section['headline']} {tarot_section['text']}"
+
+    assert 'The Ace of Pentacles reversed in the Present position is striking' in tarot_rendered
+    assert 'The Ten of Wands upright in the Guidance position is the heart of this spread' in tarot_rendered
+    assert 'it matters because it matters because' not in tarot_rendered
+    assert 'lands as the pattern' not in tarot_rendered
+    assert 'For this question, it matters because' not in tarot_rendered
+    assert 'Taken together, the spread reads like a sequence' not in tarot_rendered
+    assert 'pile of symbols' not in tarot_rendered
+
+
 def test_build_full_reading_payload_upgrades_raw_palm_and_shallow_tarot_supporting_detail() -> None:
     payload = build_full_reading_payload(
         normalized=NormalizedMysticOutput(
@@ -230,7 +277,8 @@ def test_build_full_reading_payload_keeps_tarot_story_distinct_from_card_lines()
     assert 'Eight of Cups in the past position lands as the pattern that has already been shaping this question, speaking to walking away from what no longer felt emotionally honest' in tarot_rendered
     assert 'Seven of Swords in the present position lands as the live pressure point in the present moment, speaking to strategic avoidance and partial truth' in tarot_rendered
     assert 'The Hierophant in the guidance position lands as the response the spread is steering you toward, speaking to truth, principle, and the structure that keeps you aligned' in tarot_rendered
-    assert 'Taken together, the spread reads like a sequence instead of a pile of symbols' in tarot_meta['combined_interpretation']
+    assert 'Taken together, the spread reads like a sequence' in tarot_meta['combined_interpretation']
+    assert 'pile of symbols' not in tarot_meta['combined_interpretation']
     assert tarot_meta['combined_interpretation'] != tarot_section['detail']
     assert payload['metadata']['evidence']['tarot']['combined_interpretation'] == tarot_meta['combined_interpretation']
 

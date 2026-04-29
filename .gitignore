@@ -68,6 +68,7 @@ htmlcov/
 backend/sit/reports/*.json
 backend/sit/reports/*.md
 !backend/sit/reports/.gitkeep
+backend/sit/reports-local/
 
 # Distribution / packaging
 .Python

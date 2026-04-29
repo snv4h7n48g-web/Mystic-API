@@ -22,6 +22,10 @@ _LABEL_NEXT_MOVE_PATTERN = re.compile(
     r'(?:^|\n|\s)(?:2[.)-]?\s*)?(?:your next move|next move)\s*:?\s*',
     re.IGNORECASE,
 )
+_QUESTION_LINK_PREFIX_PATTERN = re.compile(
+    r'^\s*(?:(?:for this|in this|for your)\s+question,\s*)?(?:it\s+)?matters\s+because\s+',
+    re.IGNORECASE,
+)
 
 _PALM_LABEL_MAP = {
     'heart_line': 'Heart Line',
@@ -90,8 +94,22 @@ def _normalize_for_compare(text: str) -> str:
     return re.sub(r'\W+', ' ', _normalize_whitespace(text).casefold()).strip()
 
 
+def _content_tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9']+", _normalize_whitespace(text).casefold())
+
+
 def _content_token_count(text: str) -> int:
-    return len(re.findall(r"[a-z0-9']+", _normalize_whitespace(text).casefold()))
+    return len(_content_tokens(text))
+
+
+def _is_too_similar(left: str, right: str) -> bool:
+    left_tokens = set(_content_tokens(left))
+    right_tokens = set(_content_tokens(right))
+    shortest = min(len(left_tokens), len(right_tokens))
+    if shortest == 0:
+        return False
+    overlap = len(left_tokens & right_tokens)
+    return overlap >= max(5, int(shortest * 0.75))
 
 
 def _dedupe_sentences(text: str) -> str:
@@ -253,8 +271,8 @@ def _tarot_default_question_link(card: dict, index: int, question: str | None) -
     focus = _question_focus_phrase(question)
     role_hint = _tarot_role_hint(_clean(card.get('position')), index)
     if focus:
-        return f"it matters because this card names {role_hint} in relation to {focus}"
-    return f"it matters because this card names {role_hint} in the larger spread"
+        return f"{role_hint} around {focus}"
+    return role_hint
 
 
 def _enrich_tarot_cards(tarot_cards: list[dict], question: str | None) -> list[dict]:
@@ -360,6 +378,18 @@ def _tarot_reference_symbol(card: dict) -> str:
     return ''
 
 
+def _tarot_question_link_sentence(question_link: str) -> str:
+    cleaned = _QUESTION_LINK_PREFIX_PATTERN.sub('', _normalize_whitespace(question_link)).strip()
+    if not cleaned:
+        return ''
+    if cleaned[:1].isupper() and cleaned.endswith(('.', '!', '?')):
+        return cleaned
+    lowered = cleaned.casefold()
+    if lowered.startswith(('it ', 'this ', 'that ', 'the ', 'you ', 'your ', 'part of you ')):
+        return cleaned[:1].upper() + cleaned[1:].rstrip('.') + '.'
+    return f"In context, this points to {cleaned.rstrip('.')}."
+
+
 def _tarot_card_line(card: dict, index: int) -> str:
     name = card.get('card', '')
     position = _clean(card.get('position'))
@@ -381,7 +411,7 @@ def _tarot_card_line(card: dict, index: int) -> str:
 
     follow_parts: list[str] = []
     if question_link:
-        follow_parts.append(f"For this question, it matters because {question_link.rstrip('.')}.")
+        follow_parts.append(_tarot_question_link_sentence(question_link))
     if symbol:
         follow_parts.append(f"The card image carries {symbol}.")
     if orientation == 'reversed':
@@ -414,12 +444,19 @@ def _build_tarot_story(tarot_cards: list[dict], tarot_spread: str, question: str
         name = card.get('card', '')
         position = _clean(card.get('position'))
         orientation = _clean(card.get('orientation') or 'upright').lower()
-        signal = _clean(card.get('question_link')) or _clean(card.get('interpretation')) or _tarot_reference_meaning(card)
+        role_hint = _tarot_role_hint(position, index)
+        question_link = _QUESTION_LINK_PREFIX_PATTERN.sub('', _clean(card.get('question_link'))).strip()
+        signal = question_link or _clean(card.get('interpretation')) or _tarot_reference_meaning(card)
+        if question_link and signal.casefold().startswith(role_hint.casefold()):
+            signal = signal[len(role_hint):].strip(' ,:-')
+        if signal.casefold().startswith('around '):
+            signal = f"it concentrates the question {signal}"
+        if not signal:
+            signal = _clean(card.get('interpretation')) or _tarot_reference_meaning(card)
         if not name or not signal:
             continue
-        role_hint = _tarot_role_hint(position, index)
         card_label = f"{name} reversed" if orientation == 'reversed' else name
-        fragments.append(f"{card_label} names {role_hint} by showing {signal.rstrip('.')}")
+        fragments.append(f"{card_label} brings {role_hint}: {signal.rstrip('.')}")
 
     if not fragments:
         return ''
@@ -431,7 +468,7 @@ def _build_tarot_story(tarot_cards: list[dict], tarot_spread: str, question: str
         middle = f"Taken together, the cards create one movement rather than two separate ideas: {fragments[0]}, while {fragments[1]}."
     else:
         middle = (
-            f"Taken together, the spread reads like a sequence instead of a pile of symbols: {fragments[0]}; "
+            f"Taken together, the spread reads like a sequence: {fragments[0]}; "
             f"{fragments[1]}; and {fragments[2]}."
         )
 
@@ -444,9 +481,59 @@ def _build_tarot_story(tarot_cards: list[dict], tarot_spread: str, question: str
     return _dedupe_sentences(' '.join(part for part in [lead, middle, ' '.join(closing_parts)] if part)).strip()
 
 
+def _tarot_card_name_hits(text: str, tarot_cards: list[dict]) -> int:
+    lowered = _normalize_whitespace(text).casefold()
+    hits = 0
+    for card in tarot_cards:
+        name = _clean(card.get('card')).casefold()
+        if name and name in lowered:
+            hits += 1
+    return hits
+
+
+def _tarot_base_has_spread_depth(text: str, tarot_cards: list[dict]) -> bool:
+    if not text or not tarot_cards:
+        return False
+    lowered = _normalize_whitespace(text).casefold()
+    card_hits = _tarot_card_name_hits(text, tarot_cards)
+    required_hits = min(2, len(tarot_cards))
+    if card_hits < required_hits:
+        return False
+    if _content_token_count(text) < 55:
+        return False
+    structure_markers = (
+        'past position',
+        'present position',
+        'guidance position',
+        'position',
+        'spread',
+        'together',
+        'reversed',
+        'upright',
+        'card',
+    )
+    return any(marker in lowered for marker in structure_markers)
+
+
+def _tarot_card_covered_by_base(text: str, card: dict) -> bool:
+    lowered = _normalize_whitespace(text).casefold()
+    name = _clean(card.get('card')).casefold()
+    if name and name in lowered:
+        return True
+    interpretation = _clean(card.get('interpretation'))
+    return bool(interpretation and _is_too_similar(text, interpretation))
+
+
 def _build_tarot_narrative(tarot_cards: list[dict], tarot_spread: str, question: str | None, tarot_message: str) -> str:
     base = _dedupe_sentences(tarot_message)
-    card_lines = [_tarot_card_line(card, index) for index, card in enumerate(tarot_cards[:3])]
+    if _tarot_base_has_spread_depth(base, tarot_cards):
+        return base
+
+    card_lines = [
+        _tarot_card_line(card, index)
+        for index, card in enumerate(tarot_cards[:3])
+        if not _tarot_card_covered_by_base(base, card)
+    ]
     card_lines = [line for line in card_lines if line]
     story = _build_tarot_story(tarot_cards, tarot_spread, question)
 

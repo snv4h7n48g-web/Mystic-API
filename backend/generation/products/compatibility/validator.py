@@ -4,12 +4,17 @@ RELATIONAL_MARKERS = [
     "together",
     "between you",
     "between them",
+    "each other",
+    "you both",
+    "you two",
     "relationship",
     "dynamic",
     "connection",
     "bond",
     "chemistry",
     "partnership",
+    "magnetic pull",
+    "spark",
 ]
 TENSION_MARKERS = ["tension", "friction", "clash", "misread", "conflict", "trigger"]
 STRENGTH_MARKERS = ["strength", "support", "ease", "harmony", "draw", "trust"]

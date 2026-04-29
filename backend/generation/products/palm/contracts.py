@@ -6,11 +6,11 @@ PROMPT_IDS = {
     "reading": "palm_reading",
 }
 EXPECTED_SECTION_IDS = [
-    "opening_hook",
-    "current_pattern",
-    "emotional_truth",
-    "practical_guidance",
-    "next_return_invitation",
+    "opening_invocation",
+    "palm_insight",
+    "integrated_synthesis",
+    "reflective_guidance",
+    "closing_prompt",
 ]
 CONTRACT_INSTRUCTION = """PALM CONTRACT:
 - This is a palm reading and must be led by palm features, lines, mounts, hand shape, texture, or marks when available.

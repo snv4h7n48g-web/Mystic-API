@@ -13,10 +13,14 @@ import os
 import time
 from dotenv import load_dotenv
 
+# Load environment variables before importing modules that snapshot model/env settings.
+load_dotenv()
+
 # Import our services
 from bedrock_service import get_bedrock_service
 from generation import QualityGateFailedError, get_generation_orchestrator
 from generation.parser import GenerationParseError
+from generation.products.feng_shui.reading import repair_feng_shui_analysis_payload
 from generation.prompts.composer import PROMPT_VERSION as CURRENT_PROMPT_VERSION
 from generation.validators import assess_section_safety, validate_product_payload
 from astrology_engine import get_astrology_engine
@@ -28,7 +32,7 @@ from pricing import ProductSKU, get_product, has_feature, validate_purchase, cal
 from auth_service import get_auth_service
 from user_service import get_user_service
 from purchase_verification import get_purchase_verification_service
-from deployment_env import app_env, database_url, is_production
+from deployment_env import app_env, database_url, is_production, is_release_like, llm_configuration_issues
 from observability import configure_logging, get_logger, log_event
 from auth_dependencies import get_current_user, get_current_user_optional, require_admin
 from models import (
@@ -39,8 +43,6 @@ from models import (
 from fastapi.middleware.cors import CORSMiddleware
 
 
-# Load environment variables
-load_dotenv()
 configure_logging()
 logger = get_logger("main")
 
@@ -790,7 +792,27 @@ def _database_ping() -> bool:
 def readiness():
     if not _database_ping():
         return JSONResponse(status_code=503, content={"ok": False, "ready": False, "database": "unreachable"})
-    return {"ok": True, "ready": True, "database": "reachable", "environment": APP_ENV}
+    llm_issues = llm_configuration_issues()
+    if is_release_like() and llm_issues:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "ok": False,
+                "ready": False,
+                "database": "reachable",
+                "environment": APP_ENV,
+                "llm": "misconfigured",
+                "llm_issues": llm_issues,
+            },
+        )
+    return {
+        "ok": True,
+        "ready": True,
+        "database": "reachable",
+        "environment": APP_ENV,
+        "llm": "ready" if not llm_issues else "dev-warning",
+        "llm_issues": llm_issues,
+    }
 
 
 def _normalize_location_display(location_text: str) -> str:
@@ -1876,54 +1898,48 @@ def generate_preview(
 
         # Generate preview teaser using Bedrock
         unlock_contract = _session_preview_unlock_contract(session, user)
-        if USE_PERSONA_ORCHESTRATION:
-            orchestrator = get_generation_orchestrator()
-            orchestration_result = orchestrator.build_session_preview_result(
-                session=session,
-                user=user,
-                astrology_facts=astrology_facts,
-                tarot_payload=tarot_payload,
-                unlock_price={
-                    "currency": "USD",
-                    "amount": unlock_contract["unlock_amount"],
-                },
-                product_id=unlock_contract["product_id"],
-                entitlements={
-                    "subscription_active": unlock_contract["subscription_active"],
-                    "session_unlocked": unlock_contract["session_unlocked"],
-                },
-            )
-            llm_result = {
-                "teaser_text": orchestration_result.payload["teaser_text"],
-                "input_tokens": orchestration_result.input_tokens,
-                "output_tokens": orchestration_result.output_tokens,
-                "cost_usd": orchestration_result.cost_usd,
-                "model": orchestration_result.metadata.model_id,
-                "meta": {
-                    "persona_id": orchestration_result.metadata.persona_id,
-                    "llm_profile_id": orchestration_result.metadata.llm_profile_id,
-                    "prompt_version": orchestration_result.metadata.prompt_version,
-                    "theme_tags": orchestration_result.metadata.theme_tags,
-                    "headline": orchestration_result.metadata.headline,
-                },
-            }
-            _log_llm_usage(
-                operation="build_session_preview_result",
-                model_id=orchestration_result.metadata.model_id,
-                input_tokens=orchestration_result.input_tokens,
-                output_tokens=orchestration_result.output_tokens,
-                cost_usd=orchestration_result.cost_usd,
-                session_id=session_id,
-                flow_type=flow_type,
-            )
-        else:
-            llm_result = bedrock.generate_preview_teaser(
-                question=inputs["question_intention"],
-                astrology_facts=astrology_facts,
-                tarot_cards=tarot_cards,
-                palm_facts=palm_features,
-                flow_type=flow_type,
-            )
+        if not USE_PERSONA_ORCHESTRATION:
+            raise HTTPException(500, "Persona orchestration is required for preview generation")
+        orchestrator = get_generation_orchestrator()
+        orchestration_result = orchestrator.build_session_preview_result(
+            session=session,
+            user=user,
+            astrology_facts=astrology_facts,
+            tarot_payload=tarot_payload,
+            palm_features=palm_features or [],
+            unlock_price={
+                "currency": "USD",
+                "amount": unlock_contract["unlock_amount"],
+            },
+            product_id=unlock_contract["product_id"],
+            entitlements={
+                "subscription_active": unlock_contract["subscription_active"],
+                "session_unlocked": unlock_contract["session_unlocked"],
+            },
+        )
+        llm_result = {
+            "teaser_text": orchestration_result.payload["teaser_text"],
+            "input_tokens": orchestration_result.input_tokens,
+            "output_tokens": orchestration_result.output_tokens,
+            "cost_usd": orchestration_result.cost_usd,
+            "model": orchestration_result.metadata.model_id,
+            "meta": {
+                "persona_id": orchestration_result.metadata.persona_id,
+                "llm_profile_id": orchestration_result.metadata.llm_profile_id,
+                "prompt_version": orchestration_result.metadata.prompt_version,
+                "theme_tags": orchestration_result.metadata.theme_tags,
+                "headline": orchestration_result.metadata.headline,
+            },
+        }
+        _log_llm_usage(
+            operation="build_session_preview_result",
+            model_id=orchestration_result.metadata.model_id,
+            input_tokens=orchestration_result.input_tokens,
+            output_tokens=orchestration_result.output_tokens,
+            cost_usd=orchestration_result.cost_usd,
+            session_id=session_id,
+            flow_type=flow_type,
+        )
 
         # Build preview response
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -2302,75 +2318,45 @@ def _build_session_reading_response(
             or inputs.get("deep_access") is True
         )
 
-        if USE_PERSONA_ORCHESTRATION:
-            orchestrator = get_generation_orchestrator()
-            orchestration_result = orchestrator.build_session_reading_result(
-                session=session,
-                user=user,
-                astrology_facts=astrology_facts,
-                tarot_payload=tarot_payload,
-                palm_features=palm_features,
-                include_palm=includes_palm,
-                deep_access=deep_access,
-                content_contract=content_contract,
-            )
-            llm_result = {
-                "sections": orchestration_result.payload["sections"],
-                "full_text": orchestration_result.payload["full_text"],
-                "model": orchestration_result.metadata.model_id,
-                "input_tokens": orchestration_result.input_tokens,
-                "output_tokens": orchestration_result.output_tokens,
-                "cost_usd": orchestration_result.cost_usd,
-                "meta": {
-                    "persona_id": orchestration_result.metadata.persona_id,
-                    "llm_profile_id": orchestration_result.metadata.llm_profile_id,
-                    "prompt_version": orchestration_result.metadata.prompt_version,
-                    "theme_tags": orchestration_result.metadata.theme_tags,
-                    "headline": orchestration_result.metadata.headline,
-                    "continuity_source_session_id": orchestration_result.metadata.continuity_source_session_id,
-                },
-            }
-            _log_llm_usage(
-                operation="build_session_reading_result",
-                model_id=orchestration_result.metadata.model_id,
-                input_tokens=orchestration_result.input_tokens,
-                output_tokens=orchestration_result.output_tokens,
-                cost_usd=orchestration_result.cost_usd,
-                session_id=session_id,
-                flow_type=flow_type,
-            )
-            reading = orchestration_result.payload
-        else:
-            llm_result = bedrock.generate_full_reading(
-                question=question,
-                astrology_facts=astrology_facts,
-                tarot_cards=tarot_cards,
-                palm_facts=palm_features,
-                style=style,
-                flow_type=flow_type,
-                include_palm=includes_palm,
-            )
-
-            generated_at = datetime.now(timezone.utc).isoformat()
-            reading = {
-                "sections": llm_result["sections"],
-                "full_text": llm_result["full_text"],
-                "metadata": {
-                    "dominant_themes": ["responsibility", "transformation"],
-                    "tone": f"{style}-introspective",
-                    "confidence": "medium",
-                    "personalisation_score": 0.85,
-                    "model": llm_result["model"],
-                    "input_tokens": llm_result["input_tokens"],
-                    "output_tokens": llm_result["output_tokens"],
-                    "cost_usd": llm_result["cost_usd"],
-                    "generated_at": generated_at,
-                    "includes_palm": includes_palm,
-                    "deep_access": deep_access,
-                    "flow_type": flow_type,
-                    "content_contract": content_contract,
-                },
-            }
+        if not USE_PERSONA_ORCHESTRATION:
+            raise HTTPException(500, "Persona orchestration is required for reading generation")
+        orchestrator = get_generation_orchestrator()
+        orchestration_result = orchestrator.build_session_reading_result(
+            session=session,
+            user=user,
+            astrology_facts=astrology_facts,
+            tarot_payload=tarot_payload,
+            palm_features=palm_features,
+            include_palm=includes_palm,
+            deep_access=deep_access,
+            content_contract=content_contract,
+        )
+        llm_result = {
+            "sections": orchestration_result.payload["sections"],
+            "full_text": orchestration_result.payload["full_text"],
+            "model": orchestration_result.metadata.model_id,
+            "input_tokens": orchestration_result.input_tokens,
+            "output_tokens": orchestration_result.output_tokens,
+            "cost_usd": orchestration_result.cost_usd,
+            "meta": {
+                "persona_id": orchestration_result.metadata.persona_id,
+                "llm_profile_id": orchestration_result.metadata.llm_profile_id,
+                "prompt_version": orchestration_result.metadata.prompt_version,
+                "theme_tags": orchestration_result.metadata.theme_tags,
+                "headline": orchestration_result.metadata.headline,
+                "continuity_source_session_id": orchestration_result.metadata.continuity_source_session_id,
+            },
+        }
+        _log_llm_usage(
+            operation="build_session_reading_result",
+            model_id=orchestration_result.metadata.model_id,
+            input_tokens=orchestration_result.input_tokens,
+            output_tokens=orchestration_result.output_tokens,
+            cost_usd=orchestration_result.cost_usd,
+            session_id=session_id,
+            flow_type=flow_type,
+        )
+        reading = orchestration_result.payload
 
         lunar_included = (
             flow_type != "lunar_new_year_solo"
@@ -2723,90 +2709,49 @@ def generate_compatibility_preview(
         "included": included,
     }
 
-    preview = None
-    if USE_PERSONA_ORCHESTRATION:
-        try:
-            orchestrator = get_generation_orchestrator()
-            orchestration_result = orchestrator.build_compatibility_preview_result(
-                compat=compat,
-                user=user,
-                person1=person1,
-                person2=person2,
-                chart1=chart1,
-                chart2=chart2,
-                zodiac1=zodiac1,
-                zodiac2=zodiac2,
-                synastry=synastry,
-                zodiac_harmony=zodiac_harmony,
-                entitlements=entitlements,
-            )
-            preview = orchestration_result.payload
-            preview["product_id"] = ProductSKU.COMPATIBILITY
-            preview["generated_at"] = datetime.now(timezone.utc).isoformat()
-            preview["llm_metadata"] = {
-                "model": orchestration_result.metadata.model_id,
-                "input_tokens": orchestration_result.input_tokens,
-                "output_tokens": orchestration_result.output_tokens,
-                "cost_usd": orchestration_result.cost_usd,
-            }
-            _log_llm_usage(
-                operation="build_compatibility_preview_result",
-                model_id=orchestration_result.metadata.model_id,
-                input_tokens=orchestration_result.input_tokens,
-                output_tokens=orchestration_result.output_tokens,
-                cost_usd=orchestration_result.cost_usd,
-                compatibility_id=compat_id,
-            )
-            db_update_compatibility(
-                compat_id,
-                preview=preview,
-                preview_cost_usd=orchestration_result.cost_usd,
-                preview_persona_id=orchestration_result.metadata.persona_id,
-                preview_llm_profile_id=orchestration_result.metadata.llm_profile_id,
-                preview_prompt_version=orchestration_result.metadata.prompt_version,
-                preview_theme_tags=orchestration_result.metadata.theme_tags,
-                preview_headline=orchestration_result.metadata.headline,
-            )
-        except Exception as exc:
-            log_event(
-                logger,
-                logging.ERROR,
-                "compatibility preview orchestration failed",
-                event="compatibility_preview_orchestration_failed",
-                exc_info=exc,
-                compatibility_id=compat_id,
-            )
-
-    if preview is None:
-        llm_result = bedrock.generate_compatibility_preview(
-            person1={"profile": person1, "chart": chart1},
-            person2={"profile": person2, "chart": chart2},
-            synastry=synastry,
-            zodiac_compatibility=zodiac_harmony
-        )
-
-        preview = {
-            "teaser_text": llm_result["teaser_text"],
-            "person1": {"profile": person1, "chart": chart1, "zodiac": zodiac1},
-            "person2": {"profile": person2, "chart": chart2, "zodiac": zodiac2},
-            "synastry": synastry,
-            "unlock_price": {"currency": "USD", "amount": 0.0 if included else 3.99},
-            "product_id": ProductSKU.COMPATIBILITY,
-            "entitlements": entitlements,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "llm_metadata": {
-                "model": llm_result["model"],
-                "input_tokens": llm_result["input_tokens"],
-                "output_tokens": llm_result["output_tokens"],
-                "cost_usd": llm_result["cost_usd"],
-            }
-        }
-
-        db_update_compatibility(
-            compat_id,
-            preview=preview,
-            preview_cost_usd=llm_result["cost_usd"],
-        )
+    if not USE_PERSONA_ORCHESTRATION:
+        raise HTTPException(500, "Persona orchestration is required for compatibility preview")
+    orchestrator = get_generation_orchestrator()
+    orchestration_result = orchestrator.build_compatibility_preview_result(
+        compat=compat,
+        user=user,
+        person1=person1,
+        person2=person2,
+        chart1=chart1,
+        chart2=chart2,
+        zodiac1=zodiac1,
+        zodiac2=zodiac2,
+        synastry=synastry,
+        zodiac_harmony=zodiac_harmony,
+        entitlements=entitlements,
+    )
+    preview = orchestration_result.payload
+    preview["product_id"] = ProductSKU.COMPATIBILITY
+    preview["generated_at"] = datetime.now(timezone.utc).isoformat()
+    preview["llm_metadata"] = {
+        "model": orchestration_result.metadata.model_id,
+        "input_tokens": orchestration_result.input_tokens,
+        "output_tokens": orchestration_result.output_tokens,
+        "cost_usd": orchestration_result.cost_usd,
+    }
+    _log_llm_usage(
+        operation="build_compatibility_preview_result",
+        model_id=orchestration_result.metadata.model_id,
+        input_tokens=orchestration_result.input_tokens,
+        output_tokens=orchestration_result.output_tokens,
+        cost_usd=orchestration_result.cost_usd,
+        compatibility_id=compat_id,
+    )
+    db_update_compatibility(
+        compat_id,
+        preview=preview,
+        preview_cost_usd=orchestration_result.cost_usd,
+        preview_persona_id=orchestration_result.metadata.persona_id,
+        preview_llm_profile_id=orchestration_result.metadata.llm_profile_id,
+        preview_prompt_version=orchestration_result.metadata.prompt_version,
+        preview_theme_tags=orchestration_result.metadata.theme_tags,
+        preview_headline=orchestration_result.metadata.headline,
+    )
     return {"status": "preview_ready", "preview": preview}
 
 
@@ -2915,82 +2860,46 @@ def generate_compatibility_reading(
     zodiac2 = astro_engine.calculate_chinese_zodiac(birth_year_2)
     zodiac_harmony = _zodiac_compatibility(zodiac1, zodiac2)
 
-    reading = None
-    if USE_PERSONA_ORCHESTRATION:
-        try:
-            orchestrator = get_generation_orchestrator()
-            orchestration_result = orchestrator.build_compatibility_reading_result(
-                compat=compat,
-                user=user,
-                person1=person1,
-                person2=person2,
-                chart1=chart1,
-                chart2=chart2,
-                synastry=synastry,
-                zodiac_harmony=zodiac_harmony,
-            )
-            reading = orchestration_result.payload
-            reading["metadata"].update(
-                {
-                    "model": orchestration_result.metadata.model_id,
-                    "input_tokens": orchestration_result.input_tokens,
-                    "output_tokens": orchestration_result.output_tokens,
-                    "cost_usd": orchestration_result.cost_usd,
-                }
-            )
-            _log_llm_usage(
-                operation="build_compatibility_reading_result",
-                model_id=orchestration_result.metadata.model_id,
-                input_tokens=orchestration_result.input_tokens,
-                output_tokens=orchestration_result.output_tokens,
-                cost_usd=orchestration_result.cost_usd,
-                compatibility_id=compat_id,
-            )
-            db_update_compatibility(
-                compat_id,
-                reading=reading,
-                reading_cost_usd=orchestration_result.cost_usd,
-                reading_persona_id=orchestration_result.metadata.persona_id,
-                reading_llm_profile_id=orchestration_result.metadata.llm_profile_id,
-                reading_prompt_version=orchestration_result.metadata.prompt_version,
-                reading_theme_tags=orchestration_result.metadata.theme_tags,
-                reading_headline=orchestration_result.metadata.headline,
-            )
-        except Exception as exc:
-            log_event(
-                logger,
-                logging.ERROR,
-                "compatibility reading orchestration failed",
-                event="compatibility_reading_orchestration_failed",
-                exc_info=exc,
-                compatibility_id=compat_id,
-            )
-
-    if reading is None:
-        llm_result = bedrock.generate_compatibility_reading(
-            person1={"profile": person1, "chart": chart1},
-            person2={"profile": person2, "chart": chart2},
-            synastry=synastry,
-            zodiac_compatibility=zodiac_harmony
-        )
-
-        reading = {
-            "sections": llm_result["sections"],
-            "full_text": llm_result["full_text"],
-            "metadata": {
-                "model": llm_result["model"],
-                "input_tokens": llm_result["input_tokens"],
-                "output_tokens": llm_result["output_tokens"],
-                "cost_usd": llm_result["cost_usd"],
-                "generated_at": datetime.now(timezone.utc).isoformat()
-            }
+    if not USE_PERSONA_ORCHESTRATION:
+        raise HTTPException(500, "Persona orchestration is required for compatibility reading")
+    orchestrator = get_generation_orchestrator()
+    orchestration_result = orchestrator.build_compatibility_reading_result(
+        compat=compat,
+        user=user,
+        person1=person1,
+        person2=person2,
+        chart1=chart1,
+        chart2=chart2,
+        synastry=synastry,
+        zodiac_harmony=zodiac_harmony,
+    )
+    reading = orchestration_result.payload
+    reading["metadata"].update(
+        {
+            "model": orchestration_result.metadata.model_id,
+            "input_tokens": orchestration_result.input_tokens,
+            "output_tokens": orchestration_result.output_tokens,
+            "cost_usd": orchestration_result.cost_usd,
         }
-
-        db_update_compatibility(
-            compat_id,
-            reading=reading,
-            reading_cost_usd=llm_result["cost_usd"],
-        )
+    )
+    _log_llm_usage(
+        operation="build_compatibility_reading_result",
+        model_id=orchestration_result.metadata.model_id,
+        input_tokens=orchestration_result.input_tokens,
+        output_tokens=orchestration_result.output_tokens,
+        cost_usd=orchestration_result.cost_usd,
+        compatibility_id=compat_id,
+    )
+    db_update_compatibility(
+        compat_id,
+        reading=reading,
+        reading_cost_usd=orchestration_result.cost_usd,
+        reading_persona_id=orchestration_result.metadata.persona_id,
+        reading_llm_profile_id=orchestration_result.metadata.llm_profile_id,
+        reading_prompt_version=orchestration_result.metadata.prompt_version,
+        reading_theme_tags=orchestration_result.metadata.theme_tags,
+        reading_headline=orchestration_result.metadata.headline,
+    )
     return {"status": "complete", "reading": reading}
 
 
@@ -3109,41 +3018,28 @@ def generate_feng_shui_preview(
         "included": included,
     }
 
-    if USE_PERSONA_ORCHESTRATION:
-        orchestrator = get_generation_orchestrator()
-        orchestration_result = orchestrator.build_feng_shui_preview_result(
-            analysis=analysis,
-            user=user,
-            entitlements=entitlements,
-            product_id=product_id,
-            price_amount=price_map[product_id],
-        )
-        preview_payload = orchestration_result.payload
-        preview_payload["generated_at"] = datetime.now(timezone.utc).isoformat()
-        db_update_feng_shui(
-            analysis_id,
-            preview=preview_payload,
-            product_id=product_id,
-            preview_persona_id=orchestration_result.metadata.persona_id,
-            preview_llm_profile_id=orchestration_result.metadata.llm_profile_id,
-            preview_prompt_version=orchestration_result.metadata.prompt_version,
-            preview_theme_tags=orchestration_result.metadata.theme_tags,
-            preview_headline=orchestration_result.metadata.headline,
-        )
-    else:
-        preview_payload = {
-            "teaser_text": "Your space suggests a few high-impact shifts. Unlock the full analysis for detailed recommendations.",
-            "analysis_type": analysis_type,
-            "unlock_price": {
-                "currency": "USD",
-                "amount": 0.0 if included else price_map[product_id],
-            },
-            "product_id": product_id,
-            "entitlements": entitlements,
-            "generated_at": datetime.now(timezone.utc).isoformat()
-        }
-
-        db_update_feng_shui(analysis_id, preview=preview_payload, product_id=product_id)
+    if not USE_PERSONA_ORCHESTRATION:
+        raise HTTPException(500, "Persona orchestration is required for Feng Shui preview")
+    orchestrator = get_generation_orchestrator()
+    orchestration_result = orchestrator.build_feng_shui_preview_result(
+        analysis=analysis,
+        user=user,
+        entitlements=entitlements,
+        product_id=product_id,
+        price_amount=price_map[product_id],
+    )
+    preview_payload = orchestration_result.payload
+    preview_payload["generated_at"] = datetime.now(timezone.utc).isoformat()
+    db_update_feng_shui(
+        analysis_id,
+        preview=preview_payload,
+        product_id=product_id,
+        preview_persona_id=orchestration_result.metadata.persona_id,
+        preview_llm_profile_id=orchestration_result.metadata.llm_profile_id,
+        preview_prompt_version=orchestration_result.metadata.prompt_version,
+        preview_theme_tags=orchestration_result.metadata.theme_tags,
+        preview_headline=orchestration_result.metadata.headline,
+    )
     return {"status": "preview_ready", "preview": preview_payload}
 
 
@@ -3228,7 +3124,10 @@ def generate_feng_shui_analysis(
         raise HTTPException(402, "Purchase required")
 
     if analysis.get("analysis"):
-        return {"status": "complete", "analysis": analysis["analysis"]}
+        repaired_analysis, repaired = repair_feng_shui_analysis_payload(analysis["analysis"])
+        if repaired:
+            db_update_feng_shui(analysis_id, analysis=repaired_analysis)
+        return {"status": "complete", "analysis": repaired_analysis}
 
     if not _feng_shui_rate_limit(user):
         if user:
@@ -3268,74 +3167,55 @@ def generate_feng_shui_analysis(
         context=context
     )
 
-    if USE_PERSONA_ORCHESTRATION:
-        try:
-            orchestrator = get_generation_orchestrator()
-            orchestration_result = orchestrator.build_feng_shui_analysis_result(
-                analysis=analysis,
-                user=user,
-                vision_result=vision_result,
+    if not USE_PERSONA_ORCHESTRATION:
+        raise HTTPException(500, "Persona orchestration is required for Feng Shui analysis")
+    try:
+        orchestrator = get_generation_orchestrator()
+        orchestration_result = orchestrator.build_feng_shui_analysis_result(
+            analysis=analysis,
+            user=user,
+            vision_result=vision_result,
+        )
+    except Exception as exc:
+        message = str(exc).lower()
+        if isinstance(exc, QualityGateFailedError):
+            raise _quality_gate_http_exception("Feng Shui analysis", exc)
+        if isinstance(exc, GenerationParseError):
+            raise _malformed_output_http_exception("Feng Shui analysis", exc)
+        if 'throttl' in message or 'rate limit' in message or 'too many requests' in message:
+            raise HTTPException(
+                503,
+                'Analysis capacity is temporarily tight. Please try again in a moment.'
             )
-        except Exception as exc:
-            message = str(exc).lower()
-            if isinstance(exc, QualityGateFailedError):
-                raise _quality_gate_http_exception("Feng Shui analysis", exc)
-            if isinstance(exc, GenerationParseError):
-                raise _malformed_output_http_exception("Feng Shui analysis", exc)
-            if 'throttl' in message or 'rate limit' in message or 'too many requests' in message:
-                raise HTTPException(
-                    503,
-                    'Analysis capacity is temporarily tight. Please try again in a moment.'
-                )
-            raise
-        analysis_payload = orchestration_result.payload
-        analysis_payload["metadata"].update(
-            {
-                "model": orchestration_result.metadata.model_id,
-                "input_tokens": orchestration_result.input_tokens,
-                "output_tokens": orchestration_result.output_tokens,
-                "cost_usd": orchestration_result.cost_usd,
-            }
-        )
-        _log_llm_usage(
-            operation="build_feng_shui_analysis_result",
-            model_id=orchestration_result.metadata.model_id,
-            input_tokens=orchestration_result.input_tokens,
-            output_tokens=orchestration_result.output_tokens,
-            cost_usd=orchestration_result.cost_usd,
-            analysis_id=analysis_id,
-        )
-        llm_cost = orchestration_result.cost_usd
-        db_update_feng_shui(
-            analysis_id,
-            analysis=analysis_payload,
-            cost_usd=float(analysis.get("cost_usd") or 0) + llm_cost + vision_result["cost_usd"],
-            analysis_persona_id=orchestration_result.metadata.persona_id,
-            analysis_llm_profile_id=orchestration_result.metadata.llm_profile_id,
-            analysis_prompt_version=orchestration_result.metadata.prompt_version,
-            analysis_theme_tags=orchestration_result.metadata.theme_tags,
-            analysis_headline=orchestration_result.metadata.headline,
-        )
-    else:
-        llm_result = bedrock.generate_feng_shui_analysis(
-            context=context,
-            vision_analysis=vision_result
-        )
-
-        analysis_payload = {
-            "sections": llm_result["sections"],
-            "full_text": llm_result["full_text"],
-            "metadata": {
-                "model": llm_result["model"],
-                "input_tokens": llm_result["input_tokens"],
-                "output_tokens": llm_result["output_tokens"],
-                "cost_usd": llm_result["cost_usd"],
-                "generated_at": datetime.now(timezone.utc).isoformat()
-            }
+        raise
+    analysis_payload = orchestration_result.payload
+    analysis_payload["metadata"].update(
+        {
+            "model": orchestration_result.metadata.model_id,
+            "input_tokens": orchestration_result.input_tokens,
+            "output_tokens": orchestration_result.output_tokens,
+            "cost_usd": orchestration_result.cost_usd,
         }
-
-        total_cost = float(analysis.get("cost_usd") or 0) + llm_result["cost_usd"] + vision_result["cost_usd"]
-        db_update_feng_shui(analysis_id, analysis=analysis_payload, cost_usd=total_cost)
+    )
+    _log_llm_usage(
+        operation="build_feng_shui_analysis_result",
+        model_id=orchestration_result.metadata.model_id,
+        input_tokens=orchestration_result.input_tokens,
+        output_tokens=orchestration_result.output_tokens,
+        cost_usd=orchestration_result.cost_usd,
+        analysis_id=analysis_id,
+    )
+    llm_cost = orchestration_result.cost_usd
+    db_update_feng_shui(
+        analysis_id,
+        analysis=analysis_payload,
+        cost_usd=float(analysis.get("cost_usd") or 0) + llm_cost + vision_result["cost_usd"],
+        analysis_persona_id=orchestration_result.metadata.persona_id,
+        analysis_llm_profile_id=orchestration_result.metadata.llm_profile_id,
+        analysis_prompt_version=orchestration_result.metadata.prompt_version,
+        analysis_theme_tags=orchestration_result.metadata.theme_tags,
+        analysis_headline=orchestration_result.metadata.headline,
+    )
     return {"status": "complete", "analysis": analysis_payload}
 
 
@@ -3367,8 +3247,18 @@ def get_palm_upload_url(
             content_type=safe_content_type
         )
         
-        # Store the object key for later retrieval
-        db_update_session(session_id, palm_image_url=upload_data["object_key"])
+        # Store the object key for later retrieval. A new upload changes the
+        # evidence for the reading, so clear any analysis/generated content
+        # derived from the previous palm image.
+        db_update_session(
+            session_id,
+            palm_image_url=upload_data["object_key"],
+            palm_analysis=None,
+            palm_cost_usd=None,
+            preview=None,
+            reading=None,
+            status="draft",
+        )
         
         return {
             "upload_url": upload_data["upload_url"],

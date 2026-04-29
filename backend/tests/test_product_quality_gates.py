@@ -81,7 +81,9 @@ def test_quality_gate_retries_once_then_passes() -> None:
     assert result.output_tokens == 40
 
 
-def test_quality_gate_stops_after_second_failed_attempt() -> None:
+def test_quality_gate_stops_after_second_failed_attempt(monkeypatch) -> None:
+    monkeypatch.setenv("MYSTIC_HARD_FAIL_QUALITY_GATES", "false")
+
     orchestrator = StubOrchestrator(
         responses=[
             _response(

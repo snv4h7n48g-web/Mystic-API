@@ -19,7 +19,35 @@ def test_compose_generation_prompt_includes_persona_flow_and_schema() -> None:
     assert prompt["prompt_version"] == "mystic-v3"
     assert any("PERSONA:" in message for message in prompt["messages"])
     assert any("FLOW:" in message for message in prompt["messages"])
-    assert any("Return JSON" in message for message in prompt["messages"])
+    assert any("Return compact JSON" in message for message in prompt["messages"])
+    assert any("Preview length rules" in message for message in prompt["messages"])
+    assert prompt["output_schema"]["properties"]["current_pattern"]["maxLength"] == 420
+
+
+def test_compose_generation_prompt_supports_palm_flow_prompt_ids() -> None:
+    preview_prompt = compose_generation_prompt(
+        persona_id="ancient_tarot_reader",
+        flow_id="palm_preview",
+        continuity_context={},
+        domain_context={
+            "question": "What does my hand say about love?",
+            "flow_type": "palm_solo",
+            "palm_features": [{"feature": "heart_line", "value": "curved"}],
+        },
+    )
+    reading_prompt = compose_generation_prompt(
+        persona_id="ancient_tarot_reader",
+        flow_id="palm_reading",
+        continuity_context={},
+        domain_context={
+            "question": "What does my hand say about love?",
+            "flow_type": "palm_solo",
+            "palm_features": [{"feature": "heart_line", "value": "curved"}],
+        },
+    )
+
+    assert any("palm-led preview" in message for message in preview_prompt["messages"])
+    assert any("full palm-led reading" in message for message in reading_prompt["messages"])
 
 
 def test_compose_generation_prompt_compacts_context_json() -> None:
@@ -266,6 +294,88 @@ def test_invoke_text_omits_top_p_for_anthropic_opus_profiles() -> None:
     assert result["model"] == "us.anthropic.claude-opus-4-6-v1"
 
 
+def test_invoke_text_can_force_structured_tool_output(monkeypatch) -> None:
+    monkeypatch.setenv("MYSTIC_STRUCTURED_OUTPUT_MODE", "tool")
+    service = BedrockService.__new__(BedrockService)
+    service.costs = {"test-model": {"input": 0.001, "output": 0.002}}
+
+    class FakeClient:
+        def converse(self, **kwargs):
+            assert kwargs["toolConfig"]["toolChoice"] == {"tool": {"name": "mystic_output"}}
+            schema = kwargs["toolConfig"]["tools"][0]["toolSpec"]["inputSchema"]["json"]
+            assert schema["required"] == ["opening_hook"]
+            return {
+                "output": {
+                    "message": {
+                        "content": [
+                            {
+                                "toolUse": {
+                                    "name": "mystic_output",
+                                    "input": {
+                                        "opening_hook": "A",
+                                        "current_pattern": "B",
+                                        "emotional_truth": "C",
+                                        "practical_guidance": "D",
+                                        "continuity_callback": None,
+                                        "next_return_invitation": "E",
+                                        "premium_teaser": "F",
+                                        "theme_tags": ["x"],
+                                    },
+                                }
+                            }
+                        ]
+                    }
+                },
+                "usage": {"inputTokens": 12, "outputTokens": 34},
+            }
+
+    service.client = FakeClient()
+    service._client_for_timeout = lambda timeout_ms: service.client
+
+    result = service.invoke_text(
+        model_id="test-model",
+        system_prompt="system",
+        user_messages=["one"],
+        temperature=0.4,
+        top_p=0.9,
+        max_tokens=123,
+        structured_schema={"type": "object", "properties": {"opening_hook": {"type": "string"}}, "required": ["opening_hook"]},
+    )
+
+    assert result["text"].startswith('{"opening_hook":"A"')
+
+
+def test_invoke_text_uses_json_schema_output_config_by_default() -> None:
+    service = BedrockService.__new__(BedrockService)
+    service.costs = {"test-model": {"input": 0.001, "output": 0.002}}
+
+    class FakeClient:
+        def converse(self, **kwargs):
+            config = kwargs["outputConfig"]["textFormat"]
+            assert config["type"] == "json_schema"
+            assert '"opening_hook"' in config["structure"]["jsonSchema"]["schema"]
+            assert "toolConfig" not in kwargs
+            return {
+                "output": {"message": {"content": [{"text": '{"opening_hook":"A","current_pattern":"B","emotional_truth":"C","practical_guidance":"D","continuity_callback":"","next_return_invitation":"E","premium_teaser":"","theme_tags":["x"]}'}]}},
+                "usage": {"inputTokens": 12, "outputTokens": 34},
+            }
+
+    service.client = FakeClient()
+    service._client_for_timeout = lambda timeout_ms: service.client
+
+    result = service.invoke_text(
+        model_id="test-model",
+        system_prompt="system",
+        user_messages=["one"],
+        temperature=0.4,
+        top_p=0.9,
+        max_tokens=123,
+        structured_schema={"type": "object", "properties": {"opening_hook": {"type": "string"}}, "required": ["opening_hook"]},
+    )
+
+    assert result["text"].startswith('{"opening_hook"')
+
+
 def test_build_reading_payload_includes_continuity_and_metadata() -> None:
     normalized = parse_normalized_output(
         """
@@ -296,3 +406,67 @@ def test_build_reading_payload_includes_continuity_and_metadata() -> None:
     assert any(section["id"] == "continuity_callback" for section in payload["sections"])
     assert payload["metadata"]["persona_id"] == "ancient_tarot_reader"
     assert payload["metadata"]["llm_profile_id"] == "full_premium"
+
+
+def test_build_reading_payload_skips_blank_continuity_callback() -> None:
+    normalized = parse_normalized_output(
+        r"""
+        {
+          "opening_hook": "A pattern is gathering.",
+          "current_pattern": "The current asks for clarity.",
+          "emotional_truth": "You already know what matters.",
+          "practical_guidance": "Choose the clearest next step.",
+          "continuity_callback": "   ",
+          "next_return_invitation": "Come back tomorrow.",
+          "premium_teaser": "There is another layer here.",
+          "theme_tags": ["clarity", "change"]
+        }
+        """
+    )
+    metadata = GenerationMetadata(
+        persona_id="ancient_tarot_reader",
+        llm_profile_id="full_premium",
+        prompt_version="mystic-v3",
+        model_id="test-model",
+        theme_tags=["clarity"],
+        headline="A pattern is gathering.",
+    )
+
+    payload = build_reading_payload(normalized=normalized, metadata=metadata)
+
+    assert [section["id"] for section in payload["sections"]] == [
+        "opening_hook",
+        "current_pattern",
+        "emotional_truth",
+        "practical_guidance",
+        "next_return_invitation",
+    ]
+
+
+def test_build_reading_payload_skips_no_history_continuity_callback() -> None:
+    normalized = parse_normalized_output(
+        r"""
+        {
+          "opening_hook": "A pattern is gathering.",
+          "current_pattern": "The current asks for clarity.",
+          "emotional_truth": "You already know what matters.",
+          "practical_guidance": "Choose the clearest next step.",
+          "continuity_callback": "{\"type\":\"no_history\",\"message\":\"This is our first look.\"}",
+          "next_return_invitation": "Come back tomorrow.",
+          "premium_teaser": "There is another layer here.",
+          "theme_tags": ["clarity", "change"]
+        }
+        """
+    )
+    metadata = GenerationMetadata(
+        persona_id="ancient_tarot_reader",
+        llm_profile_id="full_premium",
+        prompt_version="mystic-v3",
+        model_id="test-model",
+        theme_tags=["clarity"],
+        headline="A pattern is gathering.",
+    )
+
+    payload = build_reading_payload(normalized=normalized, metadata=metadata)
+
+    assert all(section["id"] != "continuity_callback" for section in payload["sections"])

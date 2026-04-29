@@ -275,8 +275,10 @@ def test_tarot_reading_payload_builds_three_card_chapter_flow() -> None:
 
     section_ids = [section['id'] for section in payload['sections']]
     assert section_ids[:5] == ['spread_overview', 'card_1', 'card_2', 'card_3', 'spread_story']
+    assert 'names solitude that sharpens discernment' not in payload['sections'][1]['detail']
     assert 'The Moon reversed in the Guidance position' in payload['sections'][3]['headline']
     assert 'anxiety is not allowed to masquerade as intuition' in payload['sections'][3]['detail']
+    assert 'Taken together, the spread reads like a sequence' not in payload['sections'][4]['detail']
     assert payload['metadata']['evidence']['tarot']['cards'][2]['orientation'] == 'reversed'
     assert payload['metadata']['evidence']['tarot']['combined_interpretation'].startswith('The Hermit gives the past')
 

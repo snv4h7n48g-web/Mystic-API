@@ -1,16 +1,17 @@
+from deployment_env import is_premium_text_model
 from generation.product_routing import get_product_route, resolve_product_key
 from generation.validators import validate_product_payload
 
 
-def test_daily_route_prefers_anthropic_text_lane_by_default() -> None:
+def test_daily_route_prefers_premium_text_lane_by_default() -> None:
     route = get_product_route(flow_type="daily_horoscope", surface="preview")
     assert resolve_product_key(flow_type="daily_horoscope") == "daily"
     assert route.product_key == "daily"
     assert route.persona_hint == "psychic_best_friend"
     assert route.preview_max_tokens >= 1000
     assert route.full_max_tokens >= 2600
-    assert route.preview_model_id.startswith("us.amazon.nova")
-    assert route.fallback_model_id.startswith("us.amazon.nova")
+    assert is_premium_text_model(route.preview_model_id)
+    assert is_premium_text_model(route.fallback_model_id)
 
 
 def test_full_reading_route_has_explicit_flagship_persona_hint() -> None:
@@ -108,6 +109,21 @@ def test_tarot_validator_requires_card_specific_structure() -> None:
     }
     valid = validate_product_payload("tarot", valid_payload)
     assert valid.valid is True
+
+
+def test_compatibility_validator_accepts_natural_pair_language() -> None:
+    payload = {
+        "sections": [
+            {"text": "Ava and Noah, you two are feeling the spark."},
+            {"text": "There is a magnetic pull here, and you both keep testing each other."},
+            {"text": "The friction is real, but so is the trust that can grow from it."},
+        ]
+    }
+
+    result = validate_product_payload("compatibility", payload)
+
+    assert result.valid is True
+    assert result.issues == []
 
 
 def test_extended_validators_cover_compatibility_palm_and_feng_shui() -> None:

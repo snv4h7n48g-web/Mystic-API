@@ -4,7 +4,7 @@ Small additive system-integration test harness for Mystic preview and reading ge
 
 ## Scope
 
-### v2 orchestration SIT
+### v2 Orchestration SIT
 
 v2 covers:
 - combined session preview via `MysticGenerationOrchestrator.build_session_preview_result`
@@ -34,37 +34,40 @@ Current v3 cases:
 - compatibility full reading API
 - daily preview API
 
-## What it does not do yet
+### Live LLM UAT
 
-- CI integration
-- real-model / Bedrock SIT
-- feng shui full reading SIT coverage
+The release-ready live-model path is `backend/scripts/run_llm_uat.py`. It runs the release-critical generation cases through Bedrock, emits JSON/markdown reports, and is available from the manual Backend CI workflow.
+
+## What It Does Not Do Yet
+
+- scheduled/nightly live-model UAT
+- feng shui full analysis API SIT coverage
 - lunar / palm API SIT coverage
 - snapshot-style prose assertions
-- retry orchestration for flaky external calls
+- cross-run drift and cost trend reporting
 
-## Current status
+## Current Status
 
-SIT v3 is now shipped for its bounded scope.
+SIT v3 is now shipped for its bounded scope. The live LLM UAT runner and manual CI hook cover the model-in-the-loop release path.
 
 Shipped commit chain:
-- `4382624` — Add Mystic SIT v1 preview harness
-- `203c867` — Validate combined preview payloads in SIT
-- `293b68e` — Document Mystic SIT v1 handoff
-- `20d8848` — Add SIT release policy
-- `27c8af5` — Cross-link SIT docs
-- `b9a3db2` — Add Mystic SIT v2 coverage
-- `50f8bc2` — Update SIT v2 release policy
-- `34e12ae` — Add Mystic API SIT v3 coverage
+- `4382624` - Add Mystic SIT v1 preview harness
+- `203c867` - Validate combined preview payloads in SIT
+- `293b68e` - Document Mystic SIT v1 handoff
+- `20d8848` - Add SIT release policy
+- `27c8af5` - Cross-link SIT docs
+- `b9a3db2` - Add Mystic SIT v2 coverage
+- `50f8bc2` - Update SIT v2 release policy
+- `34e12ae` - Add Mystic API SIT v3 coverage
 
 See `backend/sit/HANDOFF.md` for the phase handoff and next-step recommendation.
 See `backend/sit/RELEASE_POLICY.md` for release-workflow placement and required checks before shipping.
 
-## Run locally
+## Run Locally
 
 From `backend/` with the existing virtualenv available:
 
-### v2 orchestration SIT
+### v2 Orchestration SIT
 
 ```bash
 python -m sit.runner
@@ -97,13 +100,30 @@ pytest sit/api/test_api_sit_v3.py -q
 python -m sit.runner --api-v3
 ```
 
+### Live LLM UAT
+
+```bash
+python verify_bedrock.py
+python scripts/run_llm_uat.py --output-dir ./sit/reports
+```
+
+For local development runs that intentionally use local-only settings:
+
+```bash
+python scripts/run_llm_uat.py --allow-config-warnings --output-dir ./sit/reports-local
+```
+
 ## Output
 
 Reports are written under `backend/sit/reports/` by default:
 - `mystic-sit-report-<timestamp>.json`
 - `mystic-sit-report-<timestamp>.md`
 
-## Validation approach
+Live UAT reports are written as:
+- `mystic-llm-uat-<timestamp>.json`
+- `mystic-llm-uat-<timestamp>.md`
+
+## Validation Approach
 
 The harness checks:
 - transport success or raised exception

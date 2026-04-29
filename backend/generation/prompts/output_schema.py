@@ -1,3 +1,256 @@
+_TEXT_FIELD = {"type": "string"}
+_NULLABLE_TEXT_FIELD = {"type": "string"}
+_DAILY_SECTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "headline": _TEXT_FIELD,
+        "detail": _TEXT_FIELD,
+    },
+    "required": ["headline", "detail"],
+    "additionalProperties": False,
+}
+
+NORMALIZED_OUTPUT_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "opening_hook": _TEXT_FIELD,
+        "current_pattern": _TEXT_FIELD,
+        "emotional_truth": _TEXT_FIELD,
+        "continuity_callback": _NULLABLE_TEXT_FIELD,
+        "next_return_invitation": _TEXT_FIELD,
+        "premium_teaser": _NULLABLE_TEXT_FIELD,
+        "theme_tags": {"type": "array", "items": _TEXT_FIELD},
+        "practical_guidance": _TEXT_FIELD,
+        "what_this_is_asking_of_you": _TEXT_FIELD,
+        "your_next_move": _TEXT_FIELD,
+        "snapshot_core_theme": _TEXT_FIELD,
+        "snapshot_main_tension": _TEXT_FIELD,
+        "snapshot_best_next_move": _TEXT_FIELD,
+        "reading_opening": _TEXT_FIELD,
+        "astrological_foundation": _TEXT_FIELD,
+        "palm_revelation": _TEXT_FIELD,
+        "tarot_message": _TEXT_FIELD,
+        "signals_agree": _TEXT_FIELD,
+        "daily_sections": {
+            "type": "object",
+            "properties": {
+                "today_theme": _DAILY_SECTION_SCHEMA,
+                "today_energy": _DAILY_SECTION_SCHEMA,
+                "best_move": _DAILY_SECTION_SCHEMA,
+                "watch_out_for": _DAILY_SECTION_SCHEMA,
+                "people_energy": _DAILY_SECTION_SCHEMA,
+                "work_focus": _DAILY_SECTION_SCHEMA,
+                "timing": _DAILY_SECTION_SCHEMA,
+                "closing_guidance": _DAILY_SECTION_SCHEMA,
+            },
+            "additionalProperties": False,
+        },
+        "overview": _TEXT_FIELD,
+        "what_helps": _TEXT_FIELD,
+        "what_blocks": _TEXT_FIELD,
+        "practical_fixes": _TEXT_FIELD,
+        "action_plan": _TEXT_FIELD,
+        "tarot_spread_overview": _TEXT_FIELD,
+        "tarot_card_chapters": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "card": _TEXT_FIELD,
+                    "position": _TEXT_FIELD,
+                    "orientation": _TEXT_FIELD,
+                    "card_meaning": _TEXT_FIELD,
+                    "position_meaning": _TEXT_FIELD,
+                    "reversal_message": _TEXT_FIELD,
+                    "question_relevance": _TEXT_FIELD,
+                    "personal_implication": _TEXT_FIELD,
+                },
+                "required": [
+                    "card",
+                    "position",
+                    "orientation",
+                    "card_meaning",
+                    "position_meaning",
+                    "reversal_message",
+                    "question_relevance",
+                    "personal_implication",
+                ],
+                "additionalProperties": False,
+            },
+        },
+        "tarot_spread_story": _TEXT_FIELD,
+    },
+    "required": [
+        "opening_hook",
+        "current_pattern",
+        "emotional_truth",
+        "continuity_callback",
+        "next_return_invitation",
+        "premium_teaser",
+        "theme_tags",
+        "practical_guidance",
+    ],
+    "additionalProperties": False,
+}
+
+
+NORMALIZED_OUTPUT_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "opening_hook": _TEXT_FIELD,
+        "current_pattern": _TEXT_FIELD,
+        "emotional_truth": _TEXT_FIELD,
+        "continuity_callback": _TEXT_FIELD,
+        "next_return_invitation": _TEXT_FIELD,
+        "premium_teaser": _TEXT_FIELD,
+        "theme_tags": {"type": "array", "items": _TEXT_FIELD},
+        "practical_guidance": _TEXT_FIELD,
+        "what_this_is_asking_of_you": _TEXT_FIELD,
+        "your_next_move": _TEXT_FIELD,
+        "snapshot_core_theme": _TEXT_FIELD,
+        "snapshot_main_tension": _TEXT_FIELD,
+        "snapshot_best_next_move": _TEXT_FIELD,
+        "reading_opening": _TEXT_FIELD,
+        "astrological_foundation": _TEXT_FIELD,
+        "palm_revelation": _TEXT_FIELD,
+        "tarot_message": _TEXT_FIELD,
+        "signals_agree": _TEXT_FIELD,
+        "daily_sections": {"type": "object"},
+        "overview": _TEXT_FIELD,
+        "what_helps": _TEXT_FIELD,
+        "what_blocks": _TEXT_FIELD,
+        "practical_fixes": _TEXT_FIELD,
+        "action_plan": _TEXT_FIELD,
+        "tarot_spread_overview": _TEXT_FIELD,
+        "tarot_card_chapters": {"type": "array", "items": {"type": "object"}},
+        "tarot_spread_story": _TEXT_FIELD,
+    },
+    "required": [
+        "opening_hook",
+        "current_pattern",
+        "emotional_truth",
+        "continuity_callback",
+        "next_return_invitation",
+        "premium_teaser",
+        "theme_tags",
+        "practical_guidance",
+    ],
+}
+
+
+_BASE_PROPERTIES = {
+    "opening_hook": _TEXT_FIELD,
+    "current_pattern": _TEXT_FIELD,
+    "emotional_truth": _TEXT_FIELD,
+    "continuity_callback": _TEXT_FIELD,
+    "next_return_invitation": _TEXT_FIELD,
+    "premium_teaser": _TEXT_FIELD,
+    "theme_tags": {"type": "array", "items": _TEXT_FIELD},
+    "practical_guidance": _TEXT_FIELD,
+}
+_BASE_REQUIRED = [
+    "opening_hook",
+    "current_pattern",
+    "emotional_truth",
+    "continuity_callback",
+    "next_return_invitation",
+    "premium_teaser",
+    "theme_tags",
+    "practical_guidance",
+]
+_PREVIEW_PROPERTIES = {
+    "opening_hook": {"type": "string", "maxLength": 220},
+    "current_pattern": {"type": "string", "maxLength": 420},
+    "emotional_truth": {"type": "string", "maxLength": 420},
+    "continuity_callback": {"type": "string", "maxLength": 180},
+    "next_return_invitation": {"type": "string", "maxLength": 180},
+    "premium_teaser": {"type": "string", "maxLength": 220},
+    "theme_tags": {"type": "array", "items": {"type": "string", "maxLength": 40}},
+    "practical_guidance": {"type": "string", "maxLength": 420},
+}
+_FULL_READING_PROPERTIES = {
+    "snapshot_core_theme": _TEXT_FIELD,
+    "snapshot_main_tension": _TEXT_FIELD,
+    "snapshot_best_next_move": _TEXT_FIELD,
+    "reading_opening": _TEXT_FIELD,
+    "astrological_foundation": _TEXT_FIELD,
+    "palm_revelation": _TEXT_FIELD,
+    "tarot_message": _TEXT_FIELD,
+    "signals_agree": _TEXT_FIELD,
+    "what_this_is_asking_of_you": _TEXT_FIELD,
+    "your_next_move": _TEXT_FIELD,
+}
+_DAILY_SECTIONS_SCHEMA = {
+    "type": "object",
+    "properties": NORMALIZED_OUTPUT_JSON_SCHEMA["properties"]["daily_sections"]["properties"],
+    "required": list(NORMALIZED_OUTPUT_JSON_SCHEMA["properties"]["daily_sections"]["properties"].keys()),
+    "additionalProperties": False,
+}
+_TAROT_PROPERTIES = {
+    "tarot_spread_overview": _TEXT_FIELD,
+    "tarot_card_chapters": NORMALIZED_OUTPUT_JSON_SCHEMA["properties"]["tarot_card_chapters"],
+    "tarot_spread_story": _TEXT_FIELD,
+}
+_FENG_SHUI_PROPERTIES = {
+    "overview": _TEXT_FIELD,
+    "what_helps": _TEXT_FIELD,
+    "what_blocks": _TEXT_FIELD,
+    "practical_fixes": _TEXT_FIELD,
+    "action_plan": _TEXT_FIELD,
+}
+
+
+def output_schema_for_flow(flow_id: str) -> dict:
+    if flow_id == "session_preview" or flow_id.endswith("_preview"):
+        return {
+            "type": "object",
+            "properties": dict(_PREVIEW_PROPERTIES),
+            "required": list(_BASE_REQUIRED),
+            "additionalProperties": False,
+        }
+
+    properties = dict(_BASE_PROPERTIES)
+    required = list(_BASE_REQUIRED)
+    if flow_id == "session_reading":
+        properties.update(_FULL_READING_PROPERTIES)
+        required.extend(_FULL_READING_PROPERTIES)
+    elif flow_id == "daily_horoscope_reading":
+        properties["daily_sections"] = _DAILY_SECTIONS_SCHEMA
+        required.append("daily_sections")
+    elif flow_id == "tarot_reading":
+        properties.update(_TAROT_PROPERTIES)
+        required.extend(_TAROT_PROPERTIES)
+    elif flow_id == "feng_shui_analysis":
+        properties.update(_FENG_SHUI_PROPERTIES)
+        required.extend(_FENG_SHUI_PROPERTIES)
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
+PREVIEW_OUTPUT_SCHEMA_INSTRUCTION = """Return compact JSON with exactly these keys:
+{
+  \"opening_hook\": string,
+  \"current_pattern\": string,
+  \"emotional_truth\": string,
+  \"continuity_callback\": string,
+  \"next_return_invitation\": string,
+  \"premium_teaser\": string,
+  \"theme_tags\": string[],
+  \"practical_guidance\": string
+}
+Preview length rules:
+- Keep each prose field short enough for a paid-preview card.
+- opening_hook, next_return_invitation, and premium_teaser should each be one concise sentence.
+- current_pattern, emotional_truth, and practical_guidance should each be one or two compact sentences.
+- theme_tags should contain 3-6 short labels.
+- Do not include full-reading sections, chapter text, markdown fences, or any prose outside the JSON object.
+"""
+
+
 OUTPUT_SCHEMA_INSTRUCTION = """Return JSON with exactly these base keys:
 {
   \"opening_hook\": string,
@@ -38,5 +291,12 @@ Field rules:
 - your_next_move = the clearest grounded action or decision to take next.
 - practical_guidance = concrete guidance only when a flow still uses a single guidance field.
 - next_return_invitation = closing line only.
-Do not include markdown fences or any text outside the JSON object.
+When the API provides a structured output tool, put these fields directly in that tool input and do not write separate prose.
+When no structured output tool is provided, do not include markdown fences or any text outside the JSON object.
 """
+
+
+def output_instruction_for_flow(flow_id: str) -> str:
+    if flow_id == "session_preview" or flow_id.endswith("_preview"):
+        return PREVIEW_OUTPUT_SCHEMA_INSTRUCTION
+    return OUTPUT_SCHEMA_INSTRUCTION

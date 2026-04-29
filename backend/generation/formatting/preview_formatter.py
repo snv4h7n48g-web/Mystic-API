@@ -35,5 +35,6 @@ def build_preview_payload(
             "prompt_version": metadata.prompt_version,
             "theme_tags": metadata.theme_tags,
             "headline": metadata.headline,
+            "model": metadata.model_id,
         },
     }

@@ -2,7 +2,48 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from .mapper import map_feng_shui_analysis
+from .mapper import format_action_plan_text, format_practical_fixes_text, map_feng_shui_analysis
+
+
+def repair_feng_shui_analysis_payload(payload: dict) -> tuple[dict, bool]:
+    if not isinstance(payload, dict):
+        return payload, False
+
+    sections = payload.get("sections")
+    if not isinstance(sections, list):
+        return payload, False
+
+    repaired_sections: list[dict] = []
+    changed = False
+    for raw_section in sections:
+        if not isinstance(raw_section, dict):
+            repaired_sections.append(raw_section)
+            continue
+        section = dict(raw_section)
+        section_id = section.get("id")
+        text = str(section.get("text") or "")
+        if section_id == "practical_fixes":
+            repaired_text = format_practical_fixes_text(text)
+        elif section_id == "action_plan":
+            repaired_text = format_action_plan_text(text)
+        else:
+            repaired_text = text
+        if repaired_text and repaired_text != text:
+            section["text"] = repaired_text
+            changed = True
+        repaired_sections.append(section)
+
+    if not changed:
+        return payload, False
+
+    repaired_payload = dict(payload)
+    repaired_payload["sections"] = repaired_sections
+    repaired_payload["full_text"] = "\n\n".join(
+        str(section.get("text") or "")
+        for section in repaired_sections
+        if isinstance(section, dict) and section.get("text")
+    )
+    return repaired_payload, True
 
 
 def build_feng_shui_analysis_payload(*, normalized, metadata, analysis=None, vision_result=None):

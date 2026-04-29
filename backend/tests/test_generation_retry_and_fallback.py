@@ -152,6 +152,8 @@ def test_retry_correction_applies_once_and_returns_corrected_payload(monkeypatch
 def test_exhausted_retry_full_payload_returns_soft_failed_payload(monkeypatch) -> None:
     from generation.validators import ValidationResult
 
+    monkeypatch.setenv("MYSTIC_HARD_FAIL_QUALITY_GATES", "false")
+
     orchestrator = StubRetryOrchestrator(
         responses=[
             _response(
@@ -373,8 +375,8 @@ def test_exhausted_retry_preview_payload_does_not_leak_validation_metadata(monke
         },
     )
 
-    assert len(orchestrator.retry_instructions) == 2
-    assert len(validation_spy.calls) == 2
+    assert len(orchestrator.retry_instructions) == 1
+    assert len(validation_spy.calls) == 0
     assert "validation" not in result.payload["meta"]
     assert "expected_section_ids" not in result.payload["meta"]
 
@@ -383,7 +385,7 @@ def test_anthropic_preferred_route_falls_back_to_configured_model(monkeypatch) -
     context = GenerationContext(object_id="1", object_type="session", flow_type="daily_horoscope", surface="full")
     orchestrator = MysticGenerationOrchestrator()
 
-    primary_model = "us.anthropic.claude-opus-4-1-20250805-v1:0"
+    primary_model = "global.anthropic.claude-opus-4-5-20251101-v1:0"
     fallback_model = "us.amazon.nova-pro-v1:0"
     bedrock = StubBedrockService(
         {
@@ -431,11 +433,11 @@ def test_anthropic_preferred_route_falls_back_to_configured_model(monkeypatch) -
     )
 
     assert [call["model_id"] for call in bedrock.calls] == [primary_model, fallback_model]
-    assert all(call["timeout_ms"] == 45000 for call in bedrock.calls)
+    assert all(call["timeout_ms"] == 120000 for call in bedrock.calls)
     assert metadata.model_id == fallback_model
     assert result.metadata.model_id == fallback_model
     assert result.generation_metrics["used_fallback_model"] is True
-    assert result.generation_metrics["timeout_ms"] == 45000
+    assert result.generation_metrics["timeout_ms"] == 120000
     assert normalized.opening_hook == "Today starts with clarity."
 
 

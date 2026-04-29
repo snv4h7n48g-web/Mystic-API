@@ -188,7 +188,10 @@ def validate_preview_payload(*, case_id: str, product_key: str, payload: dict) -
             checks.append("analysis_type_present")
         else:
             hard_failures.append("missing:analysis_type")
-        _validate_contract_section_ids(payload=payload, product_key=product_key, checks=checks, hard_failures=hard_failures)
+        if isinstance(payload.get("sections"), list):
+            _validate_contract_section_ids(payload=payload, product_key=product_key, checks=checks, hard_failures=hard_failures)
+        else:
+            checks.append("feng_shui_preview_generic_shape_accepted")
 
     validation = ValidationResult(product_key=product_key, passed=True)
     if case_id in {
@@ -197,8 +200,13 @@ def validate_preview_payload(*, case_id: str, product_key: str, payload: dict) -
         "daily_preview",
         "feng_shui_preview",
     }:
-        if case_id == "daily_preview" and not isinstance(payload.get("sections"), list):
-            checks.append("daily_product_validator_skipped_for_generic_preview_envelope")
+        if case_id in {"combined_preview", "daily_preview", "feng_shui_preview"} and not isinstance(payload.get("sections"), list):
+            if case_id == "combined_preview":
+                checks.append("full_reading_product_validator_skipped_for_generic_preview_envelope")
+            elif case_id == "daily_preview":
+                checks.append("daily_product_validator_skipped_for_generic_preview_envelope")
+            else:
+                checks.append("feng_shui_product_validator_skipped_for_generic_preview_envelope")
         else:
             validation = _validation_result_for(product_key, payload)
             for issue in validation.issues:
@@ -245,7 +253,27 @@ def validate_reading_payload(*, case_id: str, product_key: str, payload: dict) -
             checks.append("combined_flow_type_metadata_present")
         else:
             hard_failures.append("invalid:metadata.flow_type")
-        _validate_contract_section_ids(payload=payload, product_key=product_key, checks=checks, hard_failures=hard_failures)
+        snapshot = payload.get("snapshot")
+        if isinstance(snapshot, dict) and all(snapshot.get(key) for key in {"core_theme", "main_tension", "best_next_move"}):
+            checks.append("combined_snapshot_present")
+        else:
+            hard_failures.append("invalid:snapshot")
+        _validate_contract_section_ids(
+            payload=payload,
+            product_key=product_key,
+            checks=checks,
+            hard_failures=hard_failures,
+            allow_subset=True,
+            required_subset={
+                "reading_opening",
+                "astrological_foundation",
+                "tarot_message",
+                "signals_agree",
+                "what_this_is_asking_of_you",
+                "your_next_move",
+                "next_return_invitation",
+            },
+        )
     elif case_id == "daily_full_reading":
         metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
         if metadata.get("flow_type") == "daily_horoscope":

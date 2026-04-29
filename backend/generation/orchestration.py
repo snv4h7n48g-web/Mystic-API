@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Any
 
 from bedrock_service import get_bedrock_service
+from deployment_env import is_release_like
 from lunar_knowledge import build_lunar_prompt_context
 
 from .continuity.builder import build_continuity_context
@@ -23,6 +25,7 @@ from .products.full_reading.formatter import build_full_reading_payload
 from .products.lunar.continuity import filter_lunar_continuity
 from .products.lunar.preview import build_lunar_preview_payload
 from .products.lunar.reading import build_lunar_reading_payload
+from .products.palm.reading import build_palm_reading_payload
 from .products.sun_moon.continuity import filter_sun_moon_continuity
 from .products.sun_moon.reading import build_sun_moon_reading_payload
 from .products.tarot.continuity import filter_tarot_continuity
@@ -182,10 +185,15 @@ class MysticGenerationOrchestrator:
 
     def _quality_gate_policy(self, *, context: GenerationContext, product_key: str | None) -> dict:
         is_full = context.surface == "full"
+        hard_fail_default = is_release_like()
+        hard_fail = os.getenv(
+            "MYSTIC_HARD_FAIL_QUALITY_GATES",
+            "true" if hard_fail_default else "false",
+        ).strip().lower() in {"1", "true", "yes", "on"}
         return {
-            "max_attempts": 2 if product_key else 1,
+            "max_attempts": 2 if product_key and is_full else 1,
             "attach_validation_metadata": is_full,
-            "hard_fail_on_exhausted_validation": False,
+            "hard_fail_on_exhausted_validation": hard_fail and is_full,
         }
 
     def _invoke_normalized_generation(
@@ -237,6 +245,7 @@ class MysticGenerationOrchestrator:
                     top_p=profile.top_p,
                     max_tokens=profile.max_tokens,
                     timeout_ms=profile.timeout_ms,
+                    structured_schema=prompt.get("output_schema"),
                 )
                 parse_started = time.perf_counter()
                 normalized = parse_normalized_output(llm_result["text"])
@@ -382,6 +391,12 @@ class MysticGenerationOrchestrator:
                     question=context.question,
                 )
                 if context.flow_type == "tarot_solo"
+                else build_palm_reading_payload(
+                    normalized=normalized,
+                    metadata=metadata,
+                    palm_features=palm_features or [],
+                )
+                if context.flow_type == "palm_solo"
                 else build_sun_moon_reading_payload(normalized=normalized, metadata=metadata)
                 if context.flow_type == "sun_moon_solo"
                 else build_full_reading_payload(
@@ -419,6 +434,7 @@ class MysticGenerationOrchestrator:
                     "prompt_version": metadata.prompt_version,
                     "theme_tags": metadata.theme_tags,
                     "headline": metadata.headline,
+                    "model": metadata.model_id,
                 },
                 "sections": [
                     {"id": "opening_hook", "text": normalized.opening_hook},
@@ -459,6 +475,7 @@ class MysticGenerationOrchestrator:
         generation_started = time.perf_counter()
         policy = self._quality_gate_policy(context=context, product_key=(contract.product_key if contract else None))
         max_attempts = max(1, int(policy.get('max_attempts', 1)))
+        effective_contract_instruction = contract_instruction if context.surface == "full" else None
 
         for _ in range(max_attempts):
             normalized, metadata, result = self._invoke_normalized_generation(
@@ -467,7 +484,7 @@ class MysticGenerationOrchestrator:
                 flow_id=flow_id,
                 continuity_context=continuity_context,
                 domain_context=domain_context,
-                contract_instruction=contract_instruction,
+                contract_instruction=effective_contract_instruction,
                 retry_instruction=retry_instruction,
             )
             payload = self._build_payload_for_context(
@@ -476,7 +493,11 @@ class MysticGenerationOrchestrator:
                 metadata=metadata,
                 **payload_builder_kwargs,
             )
-            validation = validate_product_payload(contract.product_key, payload) if contract else ValidationResult(product_key="unknown", passed=True)
+            validation = (
+                validate_product_payload(contract.product_key, payload)
+                if contract and context.surface == "full"
+                else ValidationResult(product_key=(contract.product_key if contract else "unknown"), passed=True)
+            )
             attempts.append((normalized, metadata, result, payload, validation))
             if validation.passed or not contract or not validation.retry_hint:
                 break
@@ -598,7 +619,7 @@ class MysticGenerationOrchestrator:
             question=analysis.get("user_goals"),
         )
 
-    def build_session_preview_result(self, *, session: dict, user: dict | None, astrology_facts: dict, tarot_payload: dict, unlock_price: dict, product_id: str, entitlements: dict) -> OrchestrationResult:
+    def build_session_preview_result(self, *, session: dict, user: dict | None, astrology_facts: dict, tarot_payload: dict, unlock_price: dict, product_id: str, entitlements: dict, palm_features: list[dict] | None = None) -> OrchestrationResult:
         context = self._build_session_context(session=session, user=user, surface="preview", unlocked=bool(entitlements.get("subscription_active")))
         lunar_context = self._build_lunar_domain_context(session=session) if context.flow_type == "lunar_new_year_solo" else {}
         continuity_context = build_continuity_context(
@@ -620,6 +641,7 @@ class MysticGenerationOrchestrator:
                 "flow_type": context.flow_type,
                 "astrology_facts": astrology_facts,
                 "tarot": tarot_payload,
+                "palm_features": palm_features or [],
                 "lunar_context": lunar_context,
             },
             contract_instruction=(contract.contract_instruction if contract else None),

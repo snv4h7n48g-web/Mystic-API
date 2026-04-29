@@ -11,5 +11,6 @@ Rules:
 - Keep the reading personal, vivid, and emotionally engaging.
 - Stay within the selected persona voice.
 - Obey the output schema exactly.
-- Return valid JSON only.
+- If a structured output tool is provided, call that tool exactly once with the complete payload.
+- If no structured output tool is provided, return valid JSON only.
 """

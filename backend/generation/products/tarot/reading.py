@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from .mapper import map_tarot_reading
 from ..full_reading.formatter import (
     _build_tarot_story,
@@ -14,6 +16,35 @@ from ..full_reading.formatter import (
 
 def _clean(text: str | None) -> str:
     return ' '.join((text or '').split()).strip()
+
+
+_WORD_RE = re.compile(r"[a-z0-9']+")
+_STOPWORDS = {
+    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for', 'from', 'if', 'in', 'into', 'is', 'it', 'its',
+    'of', 'on', 'or', 'so', 'than', 'that', 'the', 'their', 'there', 'these', 'this', 'to', 'up', 'with', 'you', 'your',
+}
+
+
+def _content_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in _WORD_RE.findall(_clean(text).casefold())
+        if token not in _STOPWORDS
+    }
+
+
+def _word_count(text: str) -> int:
+    return len(_WORD_RE.findall(_clean(text)))
+
+
+def _too_similar(a: str, b: str) -> bool:
+    tokens_a = _content_tokens(a)
+    tokens_b = _content_tokens(b)
+    if not tokens_a or not tokens_b:
+        return False
+    shortest = min(len(tokens_a), len(tokens_b))
+    overlap = len(tokens_a & tokens_b)
+    return overlap >= max(5, int(shortest * 0.75))
 
 
 def _split_layered_text(text: str, fallback_headline: str) -> tuple[str, str]:
@@ -42,13 +73,12 @@ def _build_section(section_id: str, title: str, text: str, fallback_headline: st
 
 def _join_paragraphs(*parts: str) -> str:
     paragraphs: list[str] = []
-    seen: set[str] = set()
     for part in parts:
         cleaned = _dedupe_sentences(_clean(part))
-        marker = cleaned.casefold()
-        if not cleaned or marker in seen:
+        if not cleaned:
             continue
-        seen.add(marker)
+        if any(_too_similar(cleaned, existing) for existing in paragraphs):
+            continue
         paragraphs.append(cleaned)
     return '\n\n'.join(paragraphs).strip()
 
@@ -90,7 +120,6 @@ def _card_chapter_text(card: dict, chapter: dict[str, str], *, index: int) -> tu
 
     headline = f'{card_label}{position_label}: {card_meaning}'
     body = _join_paragraphs(
-        f'{card_label}{position_label} names {card_meaning.rstrip(".")}.',
         position_meaning,
         reversal_message,
         f'For your question, this matters because {question_relevance.rstrip(".")}.' if question_relevance else '',
@@ -149,10 +178,13 @@ def _build_card_sections(*, normalized, tarot_cards: list[dict]) -> list[dict]:
 
 
 def _build_spread_story(*, mapped: dict, normalized, tarot_cards: list[dict], tarot_payload: dict | None, question: str | None) -> dict:
+    model_story = _clean(getattr(normalized, 'tarot_spread_story', ''))
+    deterministic_story = _build_tarot_story(tarot_cards, _clean((tarot_payload or {}).get('spread')), question)
+    needs_fallback = _word_count(model_story) < 35
     story = _join_paragraphs(
-        _clean(getattr(normalized, 'tarot_spread_story', '')),
+        model_story,
         mapped['integrated_synthesis'],
-        _build_tarot_story(tarot_cards, _clean((tarot_payload or {}).get('spread')), question),
+        deterministic_story if needs_fallback else '',
     )
     return _build_section(
         'spread_story',

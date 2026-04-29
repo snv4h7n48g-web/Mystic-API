@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from deployment_env import effective_claude_opus_model
+
 
 @dataclass(frozen=True)
 class LlmProfile:
@@ -19,7 +21,7 @@ def _env(name: str, default: str) -> str:
     return value or default
 
 
-DEFAULT_CLAUDE_OPUS = _env("BEDROCK_MODEL_CLAUDE_OPUS", "us.amazon.nova-pro-v1:0")
+DEFAULT_CLAUDE_OPUS = effective_claude_opus_model()
 
 
 LLM_PROFILES: dict[str, LlmProfile] = {
@@ -29,7 +31,7 @@ LLM_PROFILES: dict[str, LlmProfile] = {
         temperature=0.8,
         top_p=0.9,
         max_tokens=1200,
-        timeout_ms=45_000,
+        timeout_ms=120_000,
     ),
     "full_premium": LlmProfile(
         id="full_premium",
@@ -37,7 +39,7 @@ LLM_PROFILES: dict[str, LlmProfile] = {
         temperature=0.85,
         top_p=0.9,
         max_tokens=2600,
-        timeout_ms=60_000,
+        timeout_ms=180_000,
     ),
     "daily_retention": LlmProfile(
         id="daily_retention",
@@ -45,7 +47,7 @@ LLM_PROFILES: dict[str, LlmProfile] = {
         temperature=0.72,
         top_p=0.9,
         max_tokens=1100,
-        timeout_ms=45_000,
+        timeout_ms=120_000,
     ),
     "grounded_clarity": LlmProfile(
         id="grounded_clarity",
@@ -53,7 +55,7 @@ LLM_PROFILES: dict[str, LlmProfile] = {
         temperature=0.68,
         top_p=0.85,
         max_tokens=1600,
-        timeout_ms=50_000,
+        timeout_ms=120_000,
     ),
 }
 

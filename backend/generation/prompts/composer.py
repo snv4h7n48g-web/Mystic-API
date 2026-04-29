@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from .base import BASE_SYSTEM_PROMPT
 from .flow_prompts import FLOW_PROMPTS
-from .output_schema import OUTPUT_SCHEMA_INSTRUCTION
+from .output_schema import output_instruction_for_flow, output_schema_for_flow
 from .persona_prompts import PERSONA_PROMPTS
 
 PROMPT_VERSION = "mystic-v3"
@@ -54,7 +54,7 @@ def compose_generation_prompt(
     messages.extend([
         f"CONTINUITY_CONTEXT:\n{continuity_blob}",
         f"DOMAIN_CONTEXT:\n{domain_blob}",
-        OUTPUT_SCHEMA_INSTRUCTION,
+        output_instruction_for_flow(flow_id),
     ])
 
     prompt_chars = len(BASE_SYSTEM_PROMPT) + sum(len(message) for message in messages)
@@ -64,4 +64,5 @@ def compose_generation_prompt(
         "prompt_version": PROMPT_VERSION,
         "prompt_chars": prompt_chars,
         "context_chars": len(continuity_blob) + len(domain_blob),
+        "output_schema": output_schema_for_flow(flow_id),
     }

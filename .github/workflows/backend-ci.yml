@@ -1,0 +1,66 @@
+name: Backend CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      run_live_llm_uat:
+        description: "Run live Bedrock LLM UAT cases"
+        required: false
+        default: "false"
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run deterministic LLM/backend checks
+        env:
+          SKIP_DB_INIT: "true"
+          APP_ENV: development
+          MYSTIC_USE_PERSONA_ORCHESTRATION: "true"
+          MYSTIC_HARD_FAIL_QUALITY_GATES: "true"
+          BEDROCK_MODEL_CLAUDE_OPUS: global.anthropic.claude-opus-4-5-20251101-v1:0
+          JWT_SECRET_KEY: ci-only-not-for-release-xxxxxxxxxxxxxxxx
+        run: |
+          pytest \
+            tests/test_deployment_env.py \
+            tests/test_runtime_health_and_db_env.py \
+            tests/test_generation_scaffolding.py \
+            tests/test_generation_retry_and_fallback.py \
+            tests/test_product_quality_gates.py \
+            -q
+      - name: Run live Bedrock LLM UAT
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_live_llm_uat == 'true' }}
+        env:
+          APP_ENV: development
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+          BEDROCK_MODEL_CLAUDE_OPUS: global.anthropic.claude-opus-4-5-20251101-v1:0
+          MYSTIC_USE_PERSONA_ORCHESTRATION: "true"
+          MYSTIC_HARD_FAIL_QUALITY_GATES: "true"
+          JWT_SECRET_KEY: ci-live-uat-only-xxxxxxxxxxxxxxxxxxxxxxxx
+        run: |
+          python verify_bedrock.py
+          python scripts/run_llm_uat.py --output-dir ./sit/reports
+      - name: Upload live UAT reports
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.run_live_llm_uat == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mystic-llm-uat-reports
+          path: backend/sit/reports/mystic-llm-uat-*

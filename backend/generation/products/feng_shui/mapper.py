@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import re
 from typing import Any
+
+_NUMBERED_STEP_RE = re.compile(r"(?:(?<=^)|(?<=\s))([1-9]\d?)\.\s+")
 
 
 def _clean(text: str | None) -> str:
@@ -19,6 +22,64 @@ def _ensure_sentence(text: str) -> str:
 def _paragraphs(*parts: str) -> str:
     paragraphs = [_ensure_sentence(part) for part in parts if _clean(part)]
     return "\n\n".join(paragraphs).strip()
+
+
+def _split_numbered_steps(text: str) -> list[str]:
+    cleaned = _clean(text)
+    matches = list(_NUMBERED_STEP_RE.finditer(cleaned))
+    if not matches:
+        return []
+    if len(matches) == 1 and not cleaned.startswith(f"{matches[0].group(1)}."):
+        return []
+
+    steps: list[str] = []
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(cleaned)
+        body = cleaned[start:end].strip()
+        if body:
+            steps.append(f"{match.group(1)}. {body}")
+    return steps
+
+
+def _format_step_section(text: str, *, intro: str) -> str:
+    cleaned = _clean(text)
+    if not cleaned:
+        return ""
+    steps = _split_numbered_steps(cleaned)
+    if not steps:
+        return _paragraphs(cleaned)
+    return f"{_ensure_sentence(intro)}\n\n" + "\n\n".join(steps)
+
+
+def _trim_practical_fixes_tail(text: str) -> str:
+    cleaned = _clean(text)
+    cut_points = [
+        cleaned.find(marker)
+        for marker in (
+            " Start by ",
+            " First, ",
+            " 1. Clear one obvious obstruction",
+        )
+        if cleaned.find(marker) > 0
+    ]
+    if not cut_points:
+        return cleaned
+    return cleaned[: min(cut_points)].strip()
+
+
+def format_practical_fixes_text(text: str) -> str:
+    return _format_step_section(
+        _trim_practical_fixes_tail(text),
+        intro="Focus on these practical fixes.",
+    )
+
+
+def format_action_plan_text(text: str) -> str:
+    return _format_step_section(
+        text,
+        intro="Move through the space in this order.",
+    )
 
 
 def _dedupe_join(*parts: str) -> str:
@@ -189,24 +250,29 @@ def map_feng_shui_analysis(
     analysis = analysis or {}
     _ = vision_result or {}
     used: set[str] = set()
+    explicit_overview = _section_value(normalized, "overview")
+    explicit_what_helps = _section_value(normalized, "what_helps", "bagua_map")
+    explicit_what_blocks = _section_value(normalized, "what_blocks", "energy_flow")
+    explicit_practical_fixes = _section_value(normalized, "practical_fixes", "priority_actions", "recommendations")
+    explicit_action_plan = _section_value(normalized, "action_plan", "guidance")
 
     overview = _pick(
         used,
-        _section_value(normalized, "overview"),
+        explicit_overview,
         getattr(normalized, "reading_opening", ""),
         getattr(normalized, "opening_hook", ""),
         _overview_fallback(analysis),
     )
     what_helps = _pick(
         used,
-        _section_value(normalized, "what_helps", "bagua_map"),
+        explicit_what_helps,
         getattr(normalized, "current_pattern", ""),
         getattr(normalized, "snapshot_core_theme", ""),
         _what_helps_fallback(analysis),
     )
     what_blocks = _pick(
         used,
-        _section_value(normalized, "what_blocks", "energy_flow"),
+        explicit_what_blocks,
         getattr(normalized, "emotional_truth", ""),
         getattr(normalized, "continuity_callback", ""),
         getattr(normalized, "snapshot_main_tension", ""),
@@ -214,7 +280,7 @@ def map_feng_shui_analysis(
     )
     practical_fixes = _pick(
         used,
-        _section_value(normalized, "practical_fixes", "priority_actions", "recommendations"),
+        explicit_practical_fixes,
         getattr(normalized, "practical_guidance", ""),
         getattr(normalized, "your_next_move", ""),
         getattr(normalized, "snapshot_best_next_move", ""),
@@ -222,7 +288,7 @@ def map_feng_shui_analysis(
     )
     action_plan = _pick(
         used,
-        _section_value(normalized, "action_plan", "guidance"),
+        explicit_action_plan,
         getattr(normalized, "what_this_is_asking_of_you", ""),
         getattr(normalized, "your_next_move", ""),
         getattr(normalized, "next_return_invitation", ""),
@@ -230,45 +296,35 @@ def map_feng_shui_analysis(
     )
 
     return {
-        "overview": _section_text(
+        "overview": _paragraphs(explicit_overview) if explicit_overview else _section_text(
             overview,
             _dedupe_join(
-                _section_value(normalized, "overview"),
                 getattr(normalized, "reading_opening", ""),
                 getattr(normalized, "opening_hook", ""),
                 _overview_fallback(analysis),
             ),
         ),
-        "what_helps": _section_text(
+        "what_helps": _paragraphs(explicit_what_helps) if explicit_what_helps else _section_text(
             what_helps,
             _dedupe_join(
-                _section_value(normalized, "what_helps", "bagua_map"),
                 getattr(normalized, "current_pattern", ""),
                 _what_helps_fallback(analysis),
             ),
         ),
-        "what_blocks": _section_text(
+        "what_blocks": _paragraphs(explicit_what_blocks) if explicit_what_blocks else _section_text(
             what_blocks,
             _dedupe_join(
-                _section_value(normalized, "what_blocks", "energy_flow"),
                 getattr(normalized, "emotional_truth", ""),
                 getattr(normalized, "continuity_callback", ""),
                 _what_blocks_fallback(analysis),
             ),
         ),
-        "practical_fixes": _section_text(
-            practical_fixes,
-            _dedupe_join(
-                _section_value(normalized, "practical_fixes", "priority_actions", "recommendations"),
-                getattr(normalized, "practical_guidance", ""),
-                getattr(normalized, "your_next_move", ""),
-                _practical_fixes_fallback(analysis),
-            ),
+        "practical_fixes": format_practical_fixes_text(
+            explicit_practical_fixes or practical_fixes,
         ),
-        "action_plan": _section_text(
+        "action_plan": format_action_plan_text(explicit_action_plan) if explicit_action_plan else _section_text(
             action_plan,
             _dedupe_join(
-                _section_value(normalized, "action_plan", "guidance"),
                 getattr(normalized, "what_this_is_asking_of_you", ""),
                 getattr(normalized, "next_return_invitation", ""),
                 _action_plan_fallback(analysis),
